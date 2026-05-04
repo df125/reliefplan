@@ -299,3 +299,24 @@ def validate(input_file: Path) -> None:
     console.print(f"  Attendings available after 5pm: {avail_att}")
     console.print(f"  CRNAs available after 5pm: {avail_crna}")
     console.print(f"  Residents available after 5pm: {avail_res}")
+
+
+@main.command()
+@click.option("--host", default="127.0.0.1", help="Bind host.", show_default=True)
+@click.option("--port", default=8000, help="Port to listen on.", show_default=True, type=int)
+@click.option("--reload", is_flag=True, help="Auto-reload on code changes (development).")
+def serve(host: str, port: int, reload: bool) -> None:
+    """Start the web interface in a browser-accessible server."""
+    try:
+        import uvicorn
+    except ImportError:
+        err_console.print(
+            "[red]uvicorn is not installed.[/red] Run: pip install 'reliefplan[web]'"
+        )
+        sys.exit(1)
+
+    console.print(
+        f"Starting web interface at [bold]http://{host}:{port}[/bold]  "
+        "(Ctrl+C to stop)"
+    )
+    uvicorn.run("reliefplan.api:app", host=host, port=port, reload=reload)

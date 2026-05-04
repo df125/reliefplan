@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MGH Anesthesia — 5PM Coverage Planner</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --navy: #1e3a5f;
+      --legacy-bg: #dbeafe;
+      --lunder-bg: #d1fae5;
+      --unassigned-bg: #fee2e2;
+    }
+    body { background: #f0f4f8; font-size: 0.9rem; }
+    .topbar { background: var(--navy); color: #fff; padding: 10px 20px;
+              display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+    .topbar-title { font-size: 1.1rem; font-weight: 700; letter-spacing: .03em; }
+    .topbar-title small { font-weight: 400; opacity: .75; font-size: .75rem; display: block; }
+    .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 18px; overflow: hidden; }
+    .section-card .card-hdr { background: var(--navy); color: #fff; padding: 8px 16px;
+                               display: flex; align-items: center; justify-content: space-between; }
+    .section-card .card-hdr strong { font-size: .88rem; letter-spacing: .02em; }
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    thead th { background: #2d4f7c; color: #fff; padding: 6px 8px; white-space: nowrap; font-weight: 600; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    tbody td { padding: 4px 6px; vertical-align: middle; border-bottom: 1px solid #e9ecef; }
+    .form-control-sm, .form-select-sm { font-size: .8rem; padding: 2px 6px; }
+    input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .btn-del { background: none; border: 1px solid #dc3545; color: #dc3545; border-radius: 4px;
+               padding: 1px 7px; font-size: 1rem; line-height: 1.4; cursor: pointer; }
+    .btn-del:hover { background: #dc3545; color: #fff; }
+    .run-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px;
+               padding: 10px 36px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+    .run-btn:hover { background: #1d4ed8; }
+
+    /* Results */
+    .row-legacy { background: var(--legacy-bg) !important; }
+    .row-lunder { background: var(--lunder-bg) !important; }
+    .row-unassigned { background: var(--unassigned-bg) !important; }
+    .role-solo { color: #16a34a; font-weight: 700; }
+    .role-supv { color: #2563eb; font-weight: 700; }
+    .cont-mark { color: #16a34a; font-weight: 700; font-size: 1rem; }
+    .badge-shift { display: inline-block; background: #4b5563; color: #fff;
+                   border-radius: 3px; padding: 1px 5px; font-size: .72rem; }
+    .badge-crna   { background: #0369a1; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: .72rem; }
+    .badge-res    { background: #7c3aed; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: .72rem; }
+    .summary-banner { border-radius: 8px; padding: 12px 18px; margin-bottom: 16px;
+                      display: flex; align-items: center; gap: 14px; }
+    .summary-banner.ok   { background: #dcfce7; border-left: 5px solid #16a34a; }
+    .summary-banner.warn { background: #fef9c3; border-left: 5px solid #ca8a04; }
+    .summary-banner.err  { background: #fee2e2; border-left: 5px solid #dc2626; }
+    .warn-item { border-radius: 6px; padding: 7px 12px; margin-bottom: 6px; font-size: .84rem; }
+    .warn-error   { background: #fee2e2; border-left: 4px solid #dc2626; }
+    .warn-warning { background: #fef9c3; border-left: 4px solid #ca8a04; }
+    .warn-info    { background: #dbeafe; border-left: 4px solid #2563eb; }
+
+    .spinner-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 9999;
+                       display: flex; align-items: center; justify-content: center; }
+    .spinner-box { background: #fff; border-radius: 10px; padding: 28px 36px; text-align: center; }
+    .spinner { width: 40px; height: 40px; border: 4px solid #e5e7eb;
+               border-top-color: #2563eb; border-radius: 50%; animation: spin .7s linear infinite; margin: 0 auto 12px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .d-none { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="topbar-title">
+    MGH Anesthesia — 5PM Coverage Planner
+    <small>Mass General Hospital · Department of Anesthesia</small>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-sm btn-outline-light" onclick="loadSample()">Load Sample</button>
+    <label class="btn btn-sm btn-outline-light mb-0" style="cursor:pointer">
+      Import JSON <input type="file" hidden accept=".json" onchange="importJSON(this)">
+    </label>
+    <button class="btn btn-sm btn-outline-light" onclick="exportJSON()">Export JSON</button>
+  </div>
+</div>
+
+<div class="container-fluid py-3" style="max-width:1700px">
+
+  <!-- ── OR Table ─────────────────────────────────────────────── -->
+  <div class="section-card">
+    <div class="card-hdr">
+      <strong>Late-Running Operating Rooms</strong>
+      <button class="btn btn-sm btn-light" onclick="addORRow()">+ Add OR</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="min-width:58px">OR ID</th>
+            <th style="min-width:90px">Building</th>
+            <th style="min-width:95px">Floor</th>
+            <th style="min-width:150px">Daytime Attending</th>
+            <th style="min-width:120px">Daytime CRNA</th>
+            <th style="min-width:130px">Daytime Resident</th>
+            <th style="min-width:44px" title="Late Running">Late</th>
+            <th style="min-width:44px" title="Complex case — resident preferred">CPX</th>
+            <th style="min-width:44px" title="Fluoro case — no pregnant staff">FLU</th>
+            <th style="min-width:80px">Est. End</th>
+            <th style="min-width:44px" title="Case not yet started">New</th>
+            <th style="min-width:32px"></th>
+          </tr>
+        </thead>
+        <tbody id="or-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Staff Table ──────────────────────────────────────────── -->
+  <div class="section-card">
+    <div class="card-hdr">
+      <strong>After-5PM Staff</strong>
+      <button class="btn btn-sm btn-light" onclick="addStaffRow()">+ Add Staff</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="min-width:155px">Name</th>
+            <th style="min-width:95px">Role</th>
+            <th style="min-width:75px" title="Resident level (residents only)">Level</th>
+            <th style="min-width:125px">Shift Type</th>
+            <th style="min-width:110px" title="Comma-separated, e.g. no-fluoro">Restrictions</th>
+            <th style="min-width:120px" title="Comma-separated, e.g. Legacy, L3">Affinities</th>
+            <th style="min-width:68px" title="OR ID where this person worked during the day">Day OR</th>
+            <th style="min-width:68px" title="2-A / 3p-10p staff already placed in a room before 5pm">Deployed</th>
+            <th style="min-width:32px"></th>
+          </tr>
+        </thead>
+        <tbody id="staff-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Run button ───────────────────────────────────────────── -->
+  <div style="text-align:right;margin-bottom:28px">
+    <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
+  </div>
+
+  <!-- ── Spinner ──────────────────────────────────────────────── -->
+  <div id="spinner" class="spinner-overlay d-none">
+    <div class="spinner-box">
+      <div class="spinner"></div>
+      Generating plan…
+    </div>
+  </div>
+
+  <!-- ── Results ──────────────────────────────────────────────── -->
+  <div id="results-section" class="d-none"></div>
+
+</div><!-- /container -->
+
+<script>
+/* =====================================================================
+   Constants
+===================================================================== */
+const FLOORS = { Legacy: ["THOR","Gray","Jackson"], Lunder: ["L2","L3","L4"] };
+const SHIFTS = {
+  attending: ["1-A","2-A","7a-7p","3p-10p"],
+  CRNA:      ["CRNA-7a-8p","CRNA-5p-8p"],
+  resident:  ["3p-10p","1-A","2-A","7a-7p"],
+};
+
+function esc(v) {
+  if (v == null) return "";
+  return String(v)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+/* =====================================================================
+   OR table
+===================================================================== */
+function addORRow(d = {}) {
+  const building = d.building || "Legacy";
+  const floorList = FLOORS[building] || FLOORS.Legacy;
+  const selFloor  = d.floor || floorList[0];
+  const floorOpts = floorList.map(f =>
+    `<option value="${f}"${f===selFloor?" selected":""}>${f}</option>`).join("");
+
+  const row = document.createElement("tr");
+  row.innerHTML = `
+    <td><input type="number" name="id" class="form-control form-control-sm"
+        style="width:55px" value="${esc(d.id||"")}" min="1" max="100" placeholder="#"></td>
+    <td>
+      <select name="building" class="form-select form-select-sm" onchange="onBuildingChange(this)">
+        ${["Legacy","Lunder"].map(b=>`<option value="${b}"${b===building?" selected":""}>${b}</option>`).join("")}
+      </select>
+    </td>
+    <td>
+      <select name="floor" class="form-select form-select-sm" style="min-width:80px">
+        ${floorOpts}
+      </select>
+    </td>
+    <td><input type="text" name="daytimeAttending" class="form-control form-control-sm"
+        value="${esc(d.daytimeAttending||"")}" placeholder="Dr. Smith"></td>
+    <td><input type="text" name="daytimeCRNA" class="form-control form-control-sm"
+        value="${esc(d.daytimeCRNA||"")}" placeholder="optional"></td>
+    <td><input type="text" name="daytimeResident" class="form-control form-control-sm"
+        value="${esc(d.daytimeResident||"")}" placeholder="optional"></td>
+    <td style="text-align:center">
+      <input type="checkbox" name="isLateRunning"${d.isLateRunning!==false?" checked":""}>
+    </td>
+    <td style="text-align:center">
+      <input type="checkbox" name="flaggedComplex"${d.flaggedComplex?" checked":""}>
+    </td>
+    <td style="text-align:center">
+      <input type="checkbox" name="flaggedFluoro"${d.flaggedFluoro?" checked":""}>
+    </td>
+    <td><input type="text" name="estimatedEnd" class="form-control form-control-sm"
+        style="width:70px" value="${esc(d.estimatedEnd||"")}" placeholder="8pm"></td>
+    <td style="text-align:center">
+      <input type="checkbox" name="isNewStart"${d.isNewStart?" checked":""}>
+    </td>
+    <td><button class="btn-del" onclick="this.closest('tr').remove()">×</button></td>`;
+  document.getElementById("or-tbody").appendChild(row);
+}
+
+function onBuildingChange(sel) {
+  const floorSel = sel.closest("tr").querySelector("[name='floor']");
+  const floors = FLOORS[sel.value] || [];
+  floorSel.innerHTML = floors.map(f=>`<option value="${f}">${f}</option>`).join("");
+}
+
+/* =====================================================================
+   Staff table
+===================================================================== */
+function addStaffRow(d = {}) {
+  const role      = d.role || "attending";
+  const shiftList = SHIFTS[role] || SHIFTS.attending;
+  const selShift  = d.shiftType || shiftList[0];
+  const level     = d.residentLevel || "R3";
+
+  const levelOpts = ["R2","R3","R4"].map(l =>
+    `<option value="${l}"${l===level?" selected":""}>${l}</option>`).join("");
+  const shiftOpts = shiftList.map(s =>
+    `<option value="${s}"${s===selShift?" selected":""}>${s}</option>`).join("");
+
+  const row = document.createElement("tr");
+  row.innerHTML = `
+    <td><input type="text" name="name" class="form-control form-control-sm"
+        value="${esc(d.name||"")}" placeholder="Dr. Smith"></td>
+    <td>
+      <select name="role" class="form-select form-select-sm" onchange="onRoleChange(this)">
+        ${["attending","CRNA","resident"].map(r=>
+          `<option value="${r}"${r===role?" selected":""}>${r}</option>`).join("")}
+      </select>
+    </td>
+    <td>
+      <select name="residentLevel" class="form-select form-select-sm"
+          ${role!=="resident"?' disabled style="opacity:.4"':""}>
+        ${levelOpts}
+      </select>
+    </td>
+    <td>
+      <select name="shiftType" class="form-select form-select-sm">
+        ${shiftOpts}
+      </select>
+    </td>
+    <td><input type="text" name="restrictions" class="form-control form-control-sm"
+        value="${esc((d.restrictions||[]).join(", "))}" placeholder="no-fluoro"></td>
+    <td><input type="text" name="affinities" class="form-control form-control-sm"
+        value="${esc((d.affinities||[]).join(", "))}" placeholder="Legacy, L3"></td>
+    <td><input type="number" name="daytimeOR" class="form-control form-control-sm"
+        style="width:58px" value="${esc(d.daytimeOR||"")}" placeholder="#"></td>
+    <td style="text-align:center">
+      <input type="checkbox" name="alreadyDeployed"${d.alreadyDeployed?" checked":""}>
+    </td>
+    <td><button class="btn-del" onclick="this.closest('tr').remove()">×</button></td>`;
+  document.getElementById("staff-tbody").appendChild(row);
+}
+
+function onRoleChange(sel) {
+  const row   = sel.closest("tr");
+  const role  = sel.value;
+
+  // Update shift type options
+  const shiftSel = row.querySelector("[name='shiftType']");
+  shiftSel.innerHTML = (SHIFTS[role]||SHIFTS.attending)
+    .map(s=>`<option value="${s}">${s}</option>`).join("");
+
+  // Enable/disable resident level
+  const lvlSel = row.querySelector("[name='residentLevel']");
+  if (role === "resident") {
+    lvlSel.disabled = false;
+    lvlSel.style.opacity = "";
+    lvlSel.innerHTML = `<option value="R2">R2</option>
+      <option value="R3" selected>R3</option><option value="R4">R4</option>`;
+  } else {
+    lvlSel.disabled = true;
+    lvlSel.style.opacity = ".4";
+    lvlSel.innerHTML = `<option value="">—</option>`;
+  }
+}
+
+/* =====================================================================
+   Data collection
+===================================================================== */
+function collectORs() {
+  return Array.from(document.querySelectorAll("#or-tbody tr")).map(row => {
+    const f = n => row.querySelector(`[name="${n}"]`);
+    const id = parseInt(f("id").value, 10);
+    if (!id) return null;
+    return {
+      id,
+      building:         f("building").value,
+      floor:            f("floor").value,
+      daytimeAttending: f("daytimeAttending").value.trim() || null,
+      daytimeCRNA:      f("daytimeCRNA").value.trim()      || null,
+      daytimeResident:  f("daytimeResident").value.trim()  || null,
+      isLateRunning:    f("isLateRunning").checked,
+      flaggedComplex:   f("flaggedComplex").checked,
+      flaggedFluoro:    f("flaggedFluoro").checked,
+      estimatedEnd:     f("estimatedEnd").value.trim()     || null,
+      isNewStart:       f("isNewStart").checked,
+    };
+  }).filter(Boolean);
+}
+
+function collectStaff() {
+  return Array.from(document.querySelectorAll("#staff-tbody tr")).map(row => {
+    const f = n => row.querySelector(`[name="${n}"]`);
+    const name = f("name").value.trim();
+    if (!name) return null;
+    const role     = f("role").value;
+    const daytimeOR = parseInt(f("daytimeOR").value, 10) || null;
+    const split     = v => v.split(",").map(s=>s.trim()).filter(Boolean);
+    return {
+      name,
+      role,
+      residentLevel:   role === "resident" ? f("residentLevel").value : null,
+      shiftType:       f("shiftType").value,
+      availablePast5pm: true,
+      restrictions:    split(f("restrictions").value),
+      affinities:      split(f("affinities").value),
+      daytimeOR,
+      alreadyDeployed: f("alreadyDeployed").checked,
+    };
+  }).filter(Boolean);
+}
+
+/* =====================================================================
+   API calls
+===================================================================== */
+async function runPlan() {
+  const rooms = collectORs();
+  const staff = collectStaff();
+  if (!rooms.length) { alert("Add at least one OR first."); return; }
+  if (!staff.length) { alert("Add at least one staff member first."); return; }
+
+  document.getElementById("spinner").classList.remove("d-none");
+  document.getElementById("results-section").classList.add("d-none");
+
+  try {
+    const resp = await fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rooms, staff }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert("Error: " + (data.detail || resp.statusText)); return; }
+    renderResults(data);
+  } catch (err) {
+    alert("Network error: " + err.message);
+  } finally {
+    document.getElementById("spinner").classList.add("d-none");
+  }
+}
+
+async function loadSample() {
+  try {
+    const data = await fetch("/api/sample").then(r => r.json());
+    document.getElementById("or-tbody").innerHTML    = "";
+    document.getElementById("staff-tbody").innerHTML = "";
+    (data.rooms||[]).forEach(r => addORRow(r));
+    (data.staff||[]).forEach(s => addStaffRow(s));
+  } catch (err) {
+    alert("Could not load sample: " + err.message);
+  }
+}
+
+/* =====================================================================
+   Import / Export
+===================================================================== */
+function exportJSON() {
+  const blob = new Blob(
+    [JSON.stringify({ rooms: collectORs(), staff: collectStaff() }, null, 2)],
+    { type: "application/json" }
+  );
+  const a = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(blob), download: "coverage-plan.json"
+  });
+  a.click();
+}
+
+function importJSON(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      document.getElementById("or-tbody").innerHTML    = "";
+      document.getElementById("staff-tbody").innerHTML = "";
+      (data.rooms||[]).forEach(r => addORRow(r));
+      (data.staff||[]).forEach(s => addStaffRow(s));
+    } catch { alert("Invalid JSON file."); }
+  };
+  reader.readAsText(file);
+  input.value = "";
+}
+
+/* =====================================================================
+   Results rendering
+===================================================================== */
+const FLOOR_ORDER = {THOR:0,Gray:1,Jackson:2,L2:3,L3:4,L4:5};
+
+function renderResults(data) {
+  const errors   = (data.warnings||[]).filter(w=>w.severity==="error");
+  const warnings = (data.warnings||[]).filter(w=>w.severity==="warning");
+  const infos    = (data.warnings||[]).filter(w=>w.severity==="info");
+  const totalAssigned = (data.assignments||[]).length;
+  const totalRooms    = totalAssigned + (data.unassigned_rooms||[]).length;
+
+  const section = document.getElementById("results-section");
+  section.innerHTML = `
+    ${renderBanner(totalAssigned, totalRooms, errors.length, warnings.length)}
+    ${renderBoard(data)}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      ${renderSupervisorGroups(data)}
+      ${renderRelief(data)}
+    </div>
+    ${renderWarnings(data)}`;
+  section.classList.remove("d-none");
+  section.scrollIntoView({ behavior:"smooth" });
+}
+
+function renderBanner(assigned, total, errCount, warnCount) {
+  const cls  = errCount  ? "err"  : warnCount ? "warn" : "ok";
+  const icon = errCount  ? "⚠️"   : warnCount ? "⚡"   : "✅";
+  const msg  = errCount  ? `${errCount} error(s) — coverage gaps remain`
+             : warnCount ? `Plan complete with ${warnCount} warning(s)`
+             : "Plan complete — all rooms covered";
+  return `<div class="summary-banner ${cls}">
+    <span style="font-size:1.6rem">${icon}</span>
+    <div>
+      <strong>${msg}</strong><br>
+      <small style="opacity:.75">${assigned} of ${total} rooms assigned</small>
+    </div>
+  </div>`;
+}
+
+function renderBoard(data) {
+  const rm = data.room_map || {};
+  const sm = data.staff_map || {};
+
+  const rows = [...(data.assignments||[])].sort((a,b) => {
+    const ra = rm[a.or_id]||{}, rb = rm[b.or_id]||{};
+    if (ra.building !== rb.building) return (ra.building||"").localeCompare(rb.building||"");
+    const fo = (FLOOR_ORDER[ra.floor]||99) - (FLOOR_ORDER[rb.floor]||99);
+    return fo || (a.or_id - b.or_id);
+  });
+
+  const unRows = (data.unassigned_rooms||[]).map(id => ({
+    or_id: id, attending: null, attending_role: null,
+    physical_provider: null, physical_provider_type: null, continuity: false
+  }));
+
+  const allRows = [...rows, ...unRows];
+
+  const bodyHTML = allRows.map(a => {
+    const room     = rm[String(a.or_id)] || {};
+    const building = room.building || "?";
+    const rowClass = !a.attending  ? "row-unassigned"
+                   : building === "Legacy" ? "row-legacy" : "row-lunder";
+
+    const flags = [
+      room.flagged_complex ? `<span class="badge-shift" style="background:#b45309">CPX</span>` : "",
+      room.flagged_fluoro  ? `<span class="badge-shift" style="background:#7c3aed">FLU</span>` : "",
+      room.is_new_start    ? `<span class="badge-shift" style="background:#0369a1">NEW</span>` : "",
+    ].filter(Boolean).join(" ");
+
+    const roleCell = !a.attending   ? `<span style="color:#dc2626;font-weight:700">UNASSIGNED</span>`
+                   : a.attending_role === "solo" ? `<span class="role-solo">SOLO</span>`
+                   : `<span class="role-supv">SUPV</span>`;
+
+    const shift   = a.attending ? ((sm[a.attending]||{}).shift_type || "") : "";
+    const attCell = a.attending
+      ? `${esc(a.attending)} <span class="badge-shift">${esc(shift)}</span>`
+      : "—";
+
+    const physCell = a.physical_provider
+      ? `${esc(a.physical_provider)}
+         <span class="${a.physical_provider_type==="CRNA"?"badge-crna":"badge-res"}">
+           ${a.physical_provider_type}
+         </span>`
+      : a.attending
+        ? `<em style="color:#6b7280">solo attending</em>`
+        : "";
+
+    const contCell = a.continuity ? `<span class="cont-mark">✓</span>` : "";
+
+    return `<tr class="${rowClass}">
+      <td style="font-weight:700">${a.or_id}</td>
+      <td>${esc(building)}</td>
+      <td>${esc(room.floor||"?")}</td>
+      <td>${esc(room.estimated_end||"?")}</td>
+      <td>${flags || "—"}</td>
+      <td>${attCell}</td>
+      <td>${roleCell}</td>
+      <td>${physCell}</td>
+      <td style="text-align:center">${contCell}</td>
+    </tr>`;
+  }).join("");
+
+  return `<div class="section-card" style="margin-bottom:16px">
+    <div class="card-hdr"><strong>Assignment Board</strong></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="min-width:44px">OR</th>
+            <th style="min-width:68px">Bldg</th>
+            <th style="min-width:72px">Floor</th>
+            <th style="min-width:72px">Est. End</th>
+            <th style="min-width:80px">Flags</th>
+            <th style="min-width:180px">Attending</th>
+            <th style="min-width:60px">Role</th>
+            <th style="min-width:180px">Physical Provider</th>
+            <th style="min-width:46px">Cont.</th>
+          </tr>
+        </thead>
+        <tbody>${bodyHTML}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderSupervisorGroups(data) {
+  const sm   = data.staff_map || {};
+  const rm   = data.room_map  || {};
+  const groups = data.supervisor_groups || {};
+  const roles  = {};
+  (data.assignments||[]).forEach(a => { if (a.attending) roles[a.attending] = a.attending_role; });
+
+  const rowsHTML = Object.entries(groups)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .map(([name, orIds]) => {
+      const shift    = (sm[name]||{}).shift_type || "?";
+      const role     = roles[name] || "?";
+      const roomDescs = orIds.sort((a,b)=>a-b).map(id => {
+        const r = rm[String(id)] || {};
+        return `OR${id}<small style="color:#6b7280">(${r.floor||"?"})</small>`;
+      }).join(", ");
+      const roleCell = role==="solo"
+        ? `<span class="role-solo">solo</span>`
+        : `<span class="role-supv">supv</span>`;
+      return `<tr>
+        <td style="font-weight:600">${esc(name)}</td>
+        <td><span class="badge-shift">${esc(shift)}</span></td>
+        <td>${roleCell}</td>
+        <td>${roomDescs}</td>
+        <td style="text-align:center;font-weight:700">${orIds.length}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="5" style="text-align:center;color:#9ca3af">No groups</td></tr>`;
+
+  return `<div class="section-card" style="height:100%">
+    <div class="card-hdr"><strong>Supervisor Groups</strong></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>Attending</th><th>Shift</th><th>Role</th><th>Rooms</th><th>Load</th>
+        </tr></thead>
+        <tbody>${rowsHTML}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderRelief(data) {
+  const entries = data.relief_entries || [];
+  const bodyHTML = entries.length
+    ? entries.sort((a,b)=>a.or_id-b.or_id).map(e => `<tr>
+        <td style="font-weight:700">${e.or_id}</td>
+        <td>${esc(e.relieved_name)}</td>
+        <td><span class="badge-shift">${esc(e.relieved_role)}</span></td>
+      </tr>`).join("")
+    : `<tr><td colspan="3" style="text-align:center;color:#9ca3af;font-style:italic">
+         All daytime providers are on the after-5pm list
+       </td></tr>`;
+
+  return `<div class="section-card" style="height:100%">
+    <div class="card-hdr"><strong>Relief Summary <small style="font-weight:400;opacity:.8">(leaving at 5PM)</small></strong></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>OR</th><th>Outgoing Provider</th><th>Role</th></tr></thead>
+        <tbody>${bodyHTML}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderWarnings(data) {
+  const all = data.warnings || [];
+  if (!all.length) {
+    return `<div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:6px;padding:10px 16px;margin-bottom:16px">
+      <strong>✓ No warnings or errors.</strong>
+    </div>`;
+  }
+
+  const cls = { error:"warn-error", warning:"warn-warning", info:"warn-info" };
+  const pfx = { error:"⛔", warning:"⚡", info:"ℹ️" };
+
+  // Group by severity
+  const order = ["error","warning","info"];
+  const items = order.flatMap(sev =>
+    all.filter(w=>w.severity===sev).map(w => {
+      const orPart = w.or_id != null ? `<strong>OR ${w.or_id}:</strong> ` : "";
+      return `<div class="warn-item ${cls[sev]}">${pfx[sev]} ${orPart}${esc(w.message)}</div>`;
+    })
+  ).join("");
+
+  return `<div class="section-card" style="margin-bottom:16px">
+    <div class="card-hdr"><strong>Warnings &amp; Errors</strong></div>
+    <div style="padding:12px 16px">${items}</div>
+  </div>`;
+}
+
+/* =====================================================================
+   Init — start with empty tables
+===================================================================== */
+// (tables start empty; coordinator fills in or clicks Load Sample)
+</script>
+</body>
+</html>
