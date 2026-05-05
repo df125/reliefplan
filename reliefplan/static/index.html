@@ -275,26 +275,72 @@ function parseScheduleText(raw) {
   const rooms = {}, warnings = [];
   if (!raw.trim()) return {rooms, warnings};
 
-  const lines = raw.split(/\r?\n/).map(l => l.trimEnd()).filter(l => l.trim());
-  if (!lines.length) return {rooms, warnings};
+  const lines = raw.split(/\r?\n/).map(l => l.trimEnd());
+  const rows  = lines.map(l => l.split("\t").map(c => c.trim()));
 
-  // Detect delimiter: tabs win if avg tab-count ≥ 1
-  const tabAvg = lines.map(l => (l.match(/\t/g)||[]).length)
-                      .reduce((a,b)=>a+b,0) / lines.length;
-  const delim = tabAvg >= 1 ? "\t" : ",";
+  // Returns a valid OR id (1-99) if the cell looks like one, else null.
+  const toOR = cell => {
+    const m = cell.match(/^\s*(\d{1,2})\s*$/);
+    if (!m) return null;
+    const n = parseInt(m[1]);
+    return n >= 1 && n <= 99 ? n : null;
+  };
 
-  const rows = lines.map(l => l.split(delim).map(c => c.trim()));
+  // Check if this is an "MGH transposed" schedule (OR numbers as columns).
+  // Heuristic: at least one row has ≥2 cells (beyond col 0) that are valid OR ids.
+  const isTransposed = rows.some(r => r.slice(1).filter(c => toOR(c) !== null).length >= 2);
 
-  // Find header row: first row with ≥2 keyword matches
-  const HDR_KW = ["room","or","suite","attending","crna","nurse","resident","ca","anesthes","service","case","surgeon"];
+  if (isTransposed) {
+    // Transposed format: OR numbers are column headers, Staff/CRNA/Resident are row labels.
+    let currentORs = []; // [{colIdx, orId}]
+
+    for (const row of rows) {
+      if (!row.some(c => c)) continue;
+
+      const col0 = row[0].toLowerCase().trim();
+
+      // Skip administrative lines
+      if (/^team\s*lead|^resource\b/.test(col0)) continue;
+
+      // Detect an OR-numbers row: ≥1 cell beyond col 0 is a valid OR id
+      const orCols = row.map((c, i) => ({colIdx: i, orId: toOR(c)}))
+                        .filter(x => x.colIdx > 0 && x.orId !== null);
+      if (orCols.length >= 1) {
+        currentORs = orCols;
+        for (const {orId} of orCols)
+          if (!rooms[orId]) rooms[orId] = {attending: null, crna: null, resident: null};
+        continue;
+      }
+
+      // Detect a Staff/CRNA/Resident row
+      let field = null;
+      if (/^staff/.test(col0))    field = "attending";
+      else if (/^crna/.test(col0)) field = "crna";
+      else if (/^resid/.test(col0)) field = "resident";
+
+      if (field && currentORs.length) {
+        for (const {colIdx, orId} of currentORs) {
+          const val = row[colIdx] || "";
+          if (val && !/^tutor[,\s]+tutee/i.test(val))
+            rooms[orId][field] = val;
+        }
+      }
+    }
+
+    const count = Object.keys(rooms).length;
+    if (count === 0) warnings.push("No OR rooms found in transposed schedule.");
+    return {rooms, warnings, count};
+  }
+
+  // Fallback: standard columnar format (OR, Attending, CRNA, Resident as columns)
+  const HDR_KW = ["room","or","suite","attending","crna","nurse","resident","ca","anesthes"];
   let hdrIdx = -1;
   for (let i = 0; i < Math.min(rows.length, 4); i++) {
     const txt = rows[i].join(" ").toLowerCase();
     if (HDR_KW.filter(kw => txt.includes(kw)).length >= 2) { hdrIdx = i; break; }
   }
 
-  // Map columns from headers (or default positions)
-  let col = {orId: 0, att: -1, crna: -1, res: -1};
+  let col = {orId: 0, att: 1, crna: 2, res: 3};
   if (hdrIdx >= 0) {
     col = {orId: -1, att: -1, crna: -1, res: -1};
     rows[hdrIdx].forEach((h, i) => {
@@ -309,151 +355,151 @@ function parseScheduleText(raw) {
 
   const startRow = hdrIdx >= 0 ? hdrIdx + 1 : 0;
   let parsed = 0;
-
   for (let i = startRow; i < rows.length; i++) {
     const row = rows[i];
     if (row.every(c => !c)) continue;
-
-    // Extract OR number: take first 1-2 digit number in the cell
-    const orCell = row[col.orId] || "";
-    const m = orCell.match(/\b(\d{1,2})\b/);
+    const m = (row[col.orId] || "").match(/\b(\d{1,2})\b/);
     if (!m) continue;
     const id = parseInt(m[1]);
     if (id < 1 || id > 99) continue;
-
-    const get = c => (c >= 0 && c < row.length ? row[c] : "") || "";
-    rooms[id] = {
-      attending: get(col.att)  || null,
-      crna:      get(col.crna) || null,
-      resident:  get(col.res)  || null,
-    };
+    const get = c => (c >= 0 && c < row.length ? row[c] : "") || null;
+    rooms[id] = {attending: get(col.att), crna: get(col.crna), resident: get(col.res)};
     parsed++;
   }
 
   if (parsed === 0)
-    warnings.push("No OR rows found — check that the paste includes a header row with columns like 'OR', 'Attending', 'CRNA'.");
-  else if (hdrIdx < 0)
-    warnings.push("No column headers found — used default column positions (OR in col 1, Attending col 2, CRNA col 3, Resident col 4).");
-
+    warnings.push("No OR rows found — check column headers (OR, Attending, CRNA, Resident).");
   return {rooms, warnings, count: parsed};
 }
 
 /* =====================================================================
    Staff parser
 ===================================================================== */
-function inferRoleAndShift(text) {
-  const T = text.toUpperCase();
-  let role = "attending", residentLevel = null, shiftType = "1-A";
 
-  if (/CRNA|NURSE[\s._-]?ANESTH|\bAA\b/.test(T)) {
-    role = "CRNA";
-  } else if (/\bR[234]\b|CA-?[123]|\bRESIDENT\b|\bINTERN\b/.test(T)) {
-    role = "resident";
-    const m = T.match(/\b(R[234])\b/) || T.match(/CA-?([123])/);
-    if (m) residentLevel = m[0].startsWith("CA") ? "R" + m[0].slice(-1) : m[0].slice(0, 2);
-    else    residentLevel = "R3";
-  }
-
-  if (role === "attending") {
-    if      (/\b1-?A\b|FIRST[\s-]?CALL/.test(T))  shiftType = "1-A";
-    else if (/\b2-?A\b|SECOND[\s-]?CALL/.test(T)) shiftType = "2-A";
-    else if (/3[\s-]?P|3PM|3-10|3P10/.test(T))    shiftType = "3p-10p";
-    else if (/7[\s-]?A|STAY|DAY[\s-]?STAY/.test(T)) shiftType = "7a-7p";
-  } else if (role === "CRNA") {
-    shiftType = /5[\s-]?P|5PM|5-8/.test(T) ? "CRNA-5p-8p" : "CRNA-7a-8p";
-  } else {
-    shiftType = "3p-10p";
-  }
-
-  return {role, residentLevel, shiftType};
+// Returns {role, shiftType, residentLevel} if the line is a shift-type label, else null.
+function detectStaffLabel(line) {
+  // First cell only (tab-separated lines; also handles plain lines)
+  const t = line.split("\t")[0].trim();
+  if (/^1-?A$/i.test(t))                            return {role:"attending",  shiftType:"1-A",       residentLevel:null};
+  if (/^2-?A$/i.test(t))                            return {role:"attending",  shiftType:"2-A",       residentLevel:null};
+  if (/^7a7p-?A$|^7a-?7p-?A$/i.test(t))            return {role:"attending",  shiftType:"7a-7p",     residentLevel:null};
+  if (/^3p10p-?A$|^3p-?10p-?A$/i.test(t))          return {role:"attending",  shiftType:"3p-10p",    residentLevel:null};
+  if (/^R2$/i.test(t))                              return {role:"resident",   shiftType:"3p-10p",    residentLevel:"R2"};
+  if (/^R3$/i.test(t))                              return {role:"resident",   shiftType:"3p-10p",    residentLevel:"R3"};
+  if (/^R4$/i.test(t))                              return {role:"resident",   shiftType:"3p-10p",    residentLevel:"R4"};
+  if (/^CA-?1$/i.test(t))                           return {role:"resident",   shiftType:"3p-10p",    residentLevel:"R2"};
+  if (/^CA-?2$/i.test(t))                           return {role:"resident",   shiftType:"3p-10p",    residentLevel:"R3"};
+  if (/^CA-?3$/i.test(t))                           return {role:"resident",   shiftType:"3p-10p",    residentLevel:"R4"};
+  if (/CRNA.*5[Pp]|CRNA\s*PM/i.test(t))            return {role:"CRNA",       shiftType:"CRNA-5p-8p",residentLevel:null};
+  if (/CRNA.*7[Aa]/i.test(t))                       return {role:"CRNA",       shiftType:"CRNA-7a-8p",residentLevel:null};
+  if (/first[\s-]?call/i.test(t))                   return {role:"attending",  shiftType:"1-A",       residentLevel:null};
+  if (/second[\s-]?call/i.test(t))                  return {role:"attending",  shiftType:"2-A",       residentLevel:null};
+  return null;
 }
 
 function parseStaffText(raw) {
   const staff = [], warnings = [];
   if (!raw.trim()) return {staff, warnings};
 
-  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  const lines = raw.split(/\r?\n/).map(l => l.trimEnd()).filter(l => l.trim());
   if (!lines.length) return {staff, warnings};
 
-  const hasTabs = lines.some(l => l.includes("\t"));
+  // Check if this looks like the MGH alternating label/name format:
+  // at least one line is a recognized label.
+  const isAlternating = lines.some(l => detectStaffLabel(l) !== null);
 
-  if (hasTabs) {
-    const rows = lines.map(l => l.split("\t").map(c => c.trim()));
+  if (isAlternating) {
+    let currentLabel = null;
 
-    // Detect header row
-    const firstTxt = rows[0].join(" ").toLowerCase();
-    const hasHdr = /name|role|shift|attend|crna/.test(firstTxt);
-    let col = {name:0, role:1, shift:2, or:3, dep:4, restr:5};
+    for (const line of lines) {
+      const label = detectStaffLabel(line);
+      if (label) {
+        currentLabel = label;
+        continue;
+      }
 
-    if (hasHdr) {
-      col = {name:-1, role:-1, shift:-1, or:-1, dep:-1, restr:-1};
-      rows[0].forEach((h, i) => {
-        const hl = h.toLowerCase();
-        if (col.name  < 0 && /name|provider/.test(hl))        col.name  = i;
-        if (col.role  < 0 && /role|type/.test(hl))            col.role  = i;
-        if (col.shift < 0 && /shift|schedule/.test(hl))       col.shift = i;
-        if (col.or    < 0 && /\bor\b|room|daytime/.test(hl))  col.or    = i;
-        if (col.dep   < 0 && /deploy|placed|already/.test(hl)) col.dep  = i;
-        if (col.restr < 0 && /restrict|fluoro/.test(hl))      col.restr = i;
-      });
-      if (col.name < 0) col.name = 0;
-    }
+      if (!currentLabel) continue; // name before any label — skip
 
-    const start = hasHdr ? 1 : 0;
-    for (let i = start; i < rows.length; i++) {
-      const r = rows[i];
-      const g = c => (c >= 0 && c < r.length ? r[c] : "") || "";
-      const name = g(col.name) || r[0];
-      if (!name) continue;
+      // Extract name from first tab-cell; ignore trailing tabs/spaces
+      const name = line.split("\t")[0].trim();
+      if (!name || /^[-=]+$/.test(name)) continue;
 
-      const roleRaw  = g(col.role);
-      const shiftRaw = g(col.shift);
-      const {role, residentLevel, shiftType} = inferRoleAndShift(name + " " + roleRaw + " " + shiftRaw);
+      // Detect daytimeOR and alreadyDeployed from inline text (rare in this format)
+      const orMatch = name.match(/\bOR\s*(\d{1,2})\b/i);
+      const daytimeOR = orMatch ? parseInt(orMatch[1]) : null;
+      const alreadyDeployed = /deploy|placed|in\s*room/i.test(name);
 
-      const depVal = g(col.dep);
       staff.push({
         name,
-        role,
-        residentLevel,
-        shiftType,
+        role:            currentLabel.role,
+        residentLevel:   currentLabel.residentLevel,
+        shiftType:       currentLabel.shiftType,
         availablePast5pm: true,
-        restrictions: g(col.restr).split(",").map(s=>s.trim()).filter(Boolean),
-        affinities: [],
-        daytimeOR: parseInt(g(col.or)) || null,
-        alreadyDeployed: /yes|true|\bx\b|deploy|placed|✓/i.test(depVal),
+        restrictions:   [],
+        affinities:     [],
+        daytimeOR,
+        alreadyDeployed,
       });
     }
-  } else {
-    // Line-by-line pattern matching
-    for (const line of lines) {
-      if (!line.trim() || /^[-=]+$/.test(line)) continue; // skip separator lines
 
-      const {role, residentLevel, shiftType} = inferRoleAndShift(line);
-      const orMatch = line.match(/\bOR\s*(\d{1,2})\b/i) || line.match(/\b(\d{1,2})\b(?![-\/])/);
-      const daytimeOR  = orMatch ? parseInt(orMatch[1]) : null;
-      const alreadyDeployed = /deploy|placed|in\s*room|\(in\)/i.test(line);
+    return {staff, warnings};
+  }
 
-      // Strip keywords to extract name
-      let name = line
-        .replace(/\b(1-?A|2-?A|3[Pp]-?10[Pp]|7[Aa]-?7[Pp])\b/gi, "")
-        .replace(/\b(CRNA-7[Aa]-8[Pp]|CRNA-5[Pp]-8[Pp]|CRNA)\b/gi, "")
-        .replace(/\b(attending|resident|R[234]|CA-?[123])\b/gi, "")
-        .replace(/\b(first[\s-]?call|second[\s-]?call|stay|deployed|in[\s-]room)\b/gi, "")
-        .replace(/\bOR\s*\d+\b/gi, "")
-        .replace(/\(.*?\)/g, "")
-        .replace(/[-–—:,;|]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+  // Fallback: columnar TSV format (Name, Role, Shift, Daytime OR, Deployed)
+  const rows = lines.map(l => l.split("\t").map(c => c.trim()));
+  const firstTxt = rows[0].join(" ").toLowerCase();
+  const hasHdr = /name|role|shift|attend|crna/.test(firstTxt);
 
-      if (!name) { warnings.push(`Could not parse line: "${line}"`); continue; }
+  let col = {name:0, role:1, shift:2, or:3, dep:4};
+  if (hasHdr) {
+    col = {name:-1, role:-1, shift:-1, or:-1, dep:-1};
+    rows[0].forEach((h, i) => {
+      const hl = h.toLowerCase();
+      if (col.name  < 0 && /name|provider/.test(hl))         col.name  = i;
+      if (col.role  < 0 && /role|type/.test(hl))             col.role  = i;
+      if (col.shift < 0 && /shift|schedule/.test(hl))        col.shift = i;
+      if (col.or    < 0 && /\bor\b|room|daytime/.test(hl))   col.or    = i;
+      if (col.dep   < 0 && /deploy|placed|already/.test(hl)) col.dep   = i;
+    });
+    if (col.name < 0) col.name = 0;
+  }
 
-      staff.push({
-        name, role, residentLevel, shiftType,
-        availablePast5pm: true,
-        restrictions: [], affinities: [],
-        daytimeOR, alreadyDeployed,
-      });
+  const start = hasHdr ? 1 : 0;
+  for (let i = start; i < rows.length; i++) {
+    const r = rows[i];
+    const g = c => (c >= 0 && c < r.length ? r[c] : "") || "";
+    const name = g(col.name);
+    if (!name) continue;
+
+    const combined = [name, g(col.role), g(col.shift)].join(" ").toUpperCase();
+    let role = "attending", residentLevel = null, shiftType = "1-A";
+
+    if (/CRNA|NURSE\s*ANESTH/.test(combined))        { role = "CRNA"; }
+    else if (/\bR[234]\b|CA-?[123]|RESID/.test(combined)) {
+      role = "resident";
+      const m = combined.match(/\bR([234])\b/) || combined.match(/CA-?([123])/);
+      residentLevel = m ? "R" + (combined.includes("CA") ? m[1] : m[1]) : "R3";
     }
+
+    if (role === "attending") {
+      if      (/\b1-?A\b|FIRST.*CALL/.test(combined))  shiftType = "1-A";
+      else if (/\b2-?A\b|SECOND.*CALL/.test(combined)) shiftType = "2-A";
+      else if (/3P|3-10|3P10/.test(combined))           shiftType = "3p-10p";
+      else if (/7A7P|7A-7P|STAY/.test(combined))        shiftType = "7a-7p";
+    } else if (role === "CRNA") {
+      shiftType = /5P|5-8/.test(combined) ? "CRNA-5p-8p" : "CRNA-7a-8p";
+    } else {
+      shiftType = "3p-10p";
+    }
+
+    staff.push({
+      name, role, residentLevel, shiftType,
+      availablePast5pm: true,
+      restrictions: [],
+      affinities: [],
+      daytimeOR: parseInt(g(col.or)) || null,
+      alreadyDeployed: /yes|true|\bx\b|deploy|placed|✓/i.test(g(col.dep)),
+    });
   }
 
   return {staff, warnings};

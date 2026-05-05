@@ -120,30 +120,55 @@ _STAFF_TOOL: dict[str, Any] = {
 
 _SYSTEM_SCHEDULE = """\
 You are a data-extraction assistant for the MGH (Massachusetts General Hospital) \
-Anesthesia Department. Extract OR room assignments from pasted schedule text. \
-Be liberal in recognising column header synonyms: \
-"Room"/"Suite"/"OR#" → OR number; \
-"Attending"/"Anes MD"/"Anesthesiologist" → attending; \
-"CRNA"/"AA"/"Nurse Anesthetist" → CRNA; \
-"Resident"/"CA"/"Fellow"/"Intern" → resident. \
-Keep names exactly as they appear; do not reformat them."""
+Anesthesia Department. Extract OR room assignments from a pasted daily schedule.
+
+The schedule uses a TRANSPOSED layout — OR numbers are COLUMNS, not rows:
+- A section-header row starts with a floor/area name (e.g. "THOR", "Legacy GenSurg Gray", \
+"Legacy GenSurg Jackson", "Lunder 2 GenSurg", "Lunder 3 Division", "Lunder 4 Vasc Neuro Rad") \
+followed by tab-separated OR numbers.
+- Continuation rows within the same section start with whitespace/empty first column \
+followed by more OR numbers.
+- The next three rows always contain names aligned to the OR number columns:
+    "Staff"    → attending anesthesiologist for each OR
+    "CRNA"     → CRNA for each OR (may be blank)
+    "Resident" → resident for each OR (may be blank)
+- "Team Lead:" and "Resource:" lines mark the end of a section — ignore them.
+- An empty cell means no one is assigned in that role for that OR.
+- "Tutor, Tutee" is a teaching-pair PLACEHOLDER, NOT a real person — treat as null.
+- Names appear as "Last, First M" or "Last, First Middle" — keep exactly as shown.
+- OR numbers range 1–99; ignore any text that is not a 1–2 digit integer in the OR-number row.
+
+Return one entry per OR number found, with daytimeAttending/daytimeCRNA/daytimeResident \
+set to null when the cell is empty or contains "Tutor, Tutee"."""
 
 _SYSTEM_STAFF = """\
 You are a data-extraction assistant for the MGH Anesthesia Department. \
-Extract after-5pm coverage staff from a pasted call schedule or staff list. \
-The text may have section headers such as "Attendings:", "CRNAs:", "Residents:". \
-Infer role from context when not explicit: \
-a person listed under "CRNAs" is a CRNA; \
-"R2"/"R3"/"R4"/"CA-1"/"CA-2"/"CA-3" indicates a resident. \
-Infer shift type from keywords: \
-"1A"/"1-A"/"first call" → 1-A; \
-"2A"/"2-A"/"second call" → 2-A; \
-"3p"/"3pm"/"3-10" → 3p-10p; \
-"stay"/"staying"/"7a-7p" → 7a-7p; \
-"5p CRNA"/"eve CRNA"/"5-8" → CRNA-5p-8p; \
-"7a CRNA"/"day CRNA" → CRNA-7a-8p. \
-alreadyDeployed = true when: the name is followed by an OR number, \
-"in room", "deployed", or similar language."""
+Extract after-5pm coverage staff from a pasted call schedule.
+
+The format alternates: a SHIFT-TYPE LABEL on one line, then one or more NAMES on the \
+following lines (one name per line), until the next label appears. \
+Each label applies to every name listed beneath it until the next label.
+
+Shift-type label → normalized shiftType mapping (exact MGH labels used):
+  "1-A"                    → shiftType: "1-A",        role: "attending"
+  "2-A"                    → shiftType: "2-A",        role: "attending"
+  "7a7p-A"                 → shiftType: "7a-7p",      role: "attending"
+  "3p10p-A"                → shiftType: "3p-10p",     role: "attending"
+  "CRNA PM Inc5p - 8p"     → shiftType: "CRNA-5p-8p", role: "CRNA"
+  "CRNA7a - 8p"            → shiftType: "CRNA-7a-8p", role: "CRNA"
+  "R2"                     → role: "resident", residentLevel: "R2", shiftType: "3p-10p"
+  "R3"                     → role: "resident", residentLevel: "R3", shiftType: "3p-10p"
+  "R4"                     → role: "resident", residentLevel: "R4", shiftType: "3p-10p"
+
+Also accept common variations: \
+"1A"/"first call" → 1-A; "2A"/"second call" → 2-A; \
+"7a-7p"/"7a7p" → 7a-7p; "3p-10p"/"3p10p" → 3p-10p; \
+"CRNA.*5p" → CRNA-5p-8p; "CRNA.*7a" → CRNA-7a-8p; \
+"CA-1"/"CA1" → R2; "CA-2"/"CA2" → R3; "CA-3"/"CA3" → R4.
+
+Names are typically last name only or "LastFirst" run together — keep exactly as shown. \
+alreadyDeployed = false unless the name is followed by an OR number, "in room", or "deployed". \
+daytimeOR = null unless an OR number is mentioned alongside the name."""
 
 
 def _client() -> anthropic.AsyncAnthropic:
