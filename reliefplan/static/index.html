@@ -240,6 +240,7 @@ for (const id of [5,6,7,10,11])                              OR_TO_FLOOR[id] = "
 for (const id of [12,32,33,34,35,36,37,38,39,40,41,42])     OR_TO_FLOOR[id] = "Jackson";
 for (let i = 51; i <= 54; i++)                               OR_TO_FLOOR[i]  = "L2";
 for (let i = 61; i <= 73; i++)                               OR_TO_FLOOR[i]  = "L3";
+OR_TO_FLOOR[17] = "L4";
 for (let i = 81; i <= 91; i++)                               OR_TO_FLOOR[i]  = "L4";
 
 const FLOOR_TO_BUILDING = {
@@ -815,11 +816,19 @@ async function runPlan() {
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({rooms, staff}),
     });
+    if (!resp.ok) {
+      let detail = resp.statusText;
+      try { detail = (await resp.json()).detail || detail; } catch {}
+      alert("Server error " + resp.status + ": " + detail);
+      return;
+    }
     const data = await resp.json();
-    if (!resp.ok) { alert("Error: " + (data.detail || resp.statusText)); return; }
     renderResults(data);
   } catch (err) {
-    alert("Network error: " + err.message);
+    const hint = location.protocol === "file:"
+      ? "\n\nIt looks like the page was opened as a local file. Run 'reliefplan serve' and open http://localhost:8000 instead."
+      : "";
+    alert("Network error: " + err.message + hint);
   } finally {
     document.getElementById("spinner").classList.add("d-none");
   }
