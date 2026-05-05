@@ -159,6 +159,10 @@ def _supervision_score(att: _AttState, room: OperatingRoom, physical_type: str) 
     if att.staff.already_deployed and att.staff.daytime_or == room.id:
         score += 60
 
+    # Moonlighters prefer solo placement — deprioritise for supervision
+    if att.staff.is_moonlighter:
+        score -= 20
+
     return score
 
 
@@ -173,6 +177,9 @@ def _solo_score(att: _AttState, room: OperatingRoom) -> int:
         score += 20
     if room.building in att.staff.affinities:
         score += 10
+    # Moonlighters prefer solo placement
+    if att.staff.is_moonlighter:
+        score += 40
     return score
 
 
@@ -584,6 +591,33 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
 
     # Soft preference warnings
     _soft_preference_warnings(attending_pool, att_states, late_rooms, physical, warnings)
+
+    # Stay-late suggestions: only when there are still unassigned rooms
+    if unassigned_rooms:
+        # Map daytime_attending -> list of late OR ids they supervised today
+        daytime_att_late_ors: Dict[str, List[int]] = defaultdict(list)
+        for room in late_rooms:
+            if room.daytime_attending:
+                daytime_att_late_ors[room.daytime_attending].append(room.id)
+
+        for or_id in unassigned_rooms:
+            room = next((r for r in late_rooms if r.id == or_id), None)
+            if not room or not room.daytime_attending:
+                continue
+            daytime_att = room.daytime_attending
+            # Skip if this attending is already on PM staff
+            if daytime_att in {s.name for s in staff}:
+                continue
+            # Suggest only if they had exactly one late OR (clean solo handoff)
+            if len(daytime_att_late_ors[daytime_att]) == 1:
+                warnings.append(CoverageWarning(
+                    severity="suggestion",
+                    message=(
+                        f"OR {or_id}: {daytime_att} supervised only this room tonight "
+                        "and is not on PM staff — consider asking them to stay solo."
+                    ),
+                    or_id=or_id,
+                ))
 
     return CoveragePlan(
         assignments=assignments,

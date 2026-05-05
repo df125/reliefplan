@@ -102,4 +102,6 @@ def _parse_staff(d: dict, idx: int) -> StaffMember:
         affinities=d.get("affinities", []),
         daytime_or=d.get("daytimeOR"),
         already_deployed=d.get("alreadyDeployed", False),
+        is_moonlighter=bool(d.get("isMoonlighter", False)),
+        departure_target=d.get("departureTarget", ""),
     )

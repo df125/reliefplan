@@ -122,6 +122,93 @@ _STAFF_TOOL: dict[str, Any] = {
     },
 }
 
+_SITUATION_TOOL: dict[str, Any] = {
+    "name": "parse_situation",
+    "description": (
+        "Parse a free-form situation-update message from the OR coordinator and extract "
+        "structured changes: OR flag updates, room closures, team moves, staff role swaps, "
+        "and new staff additions (moonlighters, stay-late attendings)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "room_flag_updates": {
+                "type": "array",
+                "description": "Changes to OR flags or estimated end time.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "or_id":         {"type": "integer"},
+                        "flaggedComplex":{"type": "boolean"},
+                        "flaggedFluoro": {"type": "boolean"},
+                        "isNewStart":    {"type": "boolean"},
+                        "estimatedEnd":  {"type": "string", "description": "e.g. '21:00' or '10pm'"},
+                    },
+                    "required": ["or_id"],
+                },
+            },
+            "room_closures": {
+                "type": "array",
+                "description": "ORs that closed or were cancelled — remove from the late list.",
+                "items": {
+                    "type": "object",
+                    "properties": {"or_id": {"type": "integer"}},
+                    "required": ["or_id"],
+                },
+            },
+            "team_moves": {
+                "type": "array",
+                "description": "A room's team was physically moved to a different OR number.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "from_or": {"type": "integer"},
+                        "to_or":   {"type": "integer"},
+                    },
+                    "required": ["from_or", "to_or"],
+                },
+            },
+            "or_staff_swaps": {
+                "type": "array",
+                "description": "Change a specific role in a specific OR card.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "or_id": {"type": "integer"},
+                        "role":  {"type": "string", "enum": ["attending", "crna", "resident"]},
+                        "name":  {"type": "string"},
+                    },
+                    "required": ["or_id", "role", "name"],
+                },
+            },
+            "staff_additions": {
+                "type": "array",
+                "description": "New PM staff members not previously on the list.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name":            {"type": "string"},
+                        "role":            {"type": "string", "enum": ["attending", "CRNA", "resident"]},
+                        "shiftType":       {
+                            "type": "string",
+                            "enum": ["1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p"],
+                        },
+                        "isMoonlighter":   {"type": "boolean"},
+                        "departureTarget": {"type": "string", "description": "e.g. '22:00'"},
+                        "alreadyDeployed": {"type": "boolean"},
+                    },
+                    "required": ["name", "role"],
+                },
+            },
+            "summary": {
+                "type": "string",
+                "description": "Brief natural-language confirmation of what was understood.",
+            },
+        },
+        "required": ["room_flag_updates", "room_closures", "team_moves", "or_staff_swaps", "staff_additions", "summary"],
+    },
+}
+
 _REFINE_TOOL: dict[str, Any] = {
     "name": "refine_plan",
     "description": (
@@ -188,8 +275,24 @@ _REFINE_TOOL: dict[str, Any] = {
                     "list what will be changed, and explain anything that cannot be done."
                 ),
             },
+            "affinity_updates": {
+                "type": "array",
+                "description": (
+                    "If the user mentions a preference (e.g. 'Dr. Smith tends to work L4'), "
+                    "record it here so it can be persisted."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name":   {"type": "string"},
+                        "add":    {"type": "array", "items": {"type": "string"}},
+                        "remove": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["name", "add", "remove"],
+                },
+            },
         },
-        "required": ["edits", "summary"],
+        "required": ["edits", "summary", "affinity_updates"],
     },
 }
 
@@ -483,4 +586,68 @@ async def parse_refinement(
             "rejection_reason": e.get("rejection_reason") or None,
         })
 
-    return {"edits": edits, "summary": args.get("summary", "")}
+    return {
+        "edits": edits,
+        "summary": args.get("summary", ""),
+        "affinity_updates": args.get("affinity_updates", []),
+    }
+
+
+_SYSTEM_SITUATION = """\
+You are a scheduling assistant for the MGH Anesthesia 5PM Coverage Planner.
+The coordinator has typed a free-form situation update describing changes that have occurred
+since the initial plan was entered. Parse the message and extract structured changes.
+
+Guidelines:
+- room_closures: OR was cancelled or closed entirely; remove it from the late-running list.
+- team_moves: the entire team from one OR physically moved to a different OR number (common when
+  a case is bumped to another room). Copy daytime attending/crna/resident fields.
+- or_staff_swaps: a specific role in an OR changed (e.g. "attending in OR 12 is now Dr. Jones").
+- room_flag_updates: OR complexity/fluoro flags changed, or estimated end time was stated.
+- staff_additions: new PM staff not previously on the list (moonlighters, stay-late attendings).
+  Set isMoonlighter=true if the person is described as "moonlighter", "moonlighting", or similar.
+  Set departureTarget to a 24h time string if a specific departure time is mentioned.
+- Return empty arrays for categories that have no changes.
+- summary: one or two sentences confirming what you understood."""
+
+
+async def parse_situation(
+    text: str,
+    rooms: list[dict[str, Any]],
+    staff: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Parse a natural-language situation update and return structured diffs.
+    Returns the full tool-call output dict.
+    Raises ValueError if no API key; RuntimeError on unexpected response.
+    """
+    room_context = ", ".join(
+        f"OR {r.get('id')} ({r.get('building','?')}/{r.get('floor','?')})" for r in rooms
+    )
+    staff_context = ", ".join(
+        f"{s.get('name')} ({s.get('role')})" for s in staff
+    )
+    context = (
+        f"Current late-running ORs: {room_context or 'none listed'}.\n"
+        f"Current PM staff: {staff_context or 'none listed'}."
+    )
+
+    client = _client()
+    response = await client.aio.models.generate_content(
+        model=_MODEL,
+        contents=f"{context}\n\nSituation update:\n{text}",
+        config=_forced_config(_SYSTEM_SITUATION, "parse_situation", _SITUATION_TOOL),
+    )
+
+    args = _extract_fc_args(response, "parse_situation")
+    if args is None:
+        raise RuntimeError("LLM did not return the expected function call")
+
+    return {
+        "room_flag_updates": args.get("room_flag_updates", []),
+        "room_closures":     args.get("room_closures", []),
+        "team_moves":        args.get("team_moves", []),
+        "or_staff_swaps":    args.get("or_staff_swaps", []),
+        "staff_additions":   args.get("staff_additions", []),
+        "summary":           args.get("summary", ""),
+    }

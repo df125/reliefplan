@@ -9,9 +9,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from .affinities import load_affinities, merge_affinities, save_affinities
 from .algorithm import plan as run_plan
 from .loader import _parse_room, _parse_staff
-from .parser import parse_or_schedule, parse_staff_list, parse_refinement
+from .parser import parse_or_schedule, parse_situation, parse_staff_list, parse_refinement
 from .refine import apply_edits
 
 app = FastAPI(title="MGH Anesthesia Coverage Planner", docs_url=None, redoc_url=None)
@@ -35,6 +36,14 @@ async def api_plan(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="No rooms provided")
     if not staff:
         raise HTTPException(status_code=422, detail="No staff provided")
+
+    # Merge persisted affinities into each staff member before planning
+    stored = load_affinities()
+    for s in staff:
+        extra = stored.get(s.name, [])
+        for tag in extra:
+            if tag not in s.affinities:
+                s.affinities.append(tag)
 
     result = run_plan(rooms, staff)
     return {
@@ -73,14 +82,41 @@ async def api_refine(request: Request) -> dict[str, Any]:
         current_plan, refine_result["edits"], rooms, staff
     )
 
+    # Persist any affinity updates extracted by the LLM
+    affinity_updates = refine_result.get("affinity_updates", [])
+    affinities_saved = False
+    if affinity_updates:
+        existing = load_affinities()
+        merged = merge_affinities(existing, affinity_updates)
+        save_affinities(merged)
+        affinities_saved = True
+
     return {
         **updated_plan,
-        "room_map":        {str(r.id): dataclasses.asdict(r) for r in rooms},
-        "staff_map":       {s.name: dataclasses.asdict(s) for s in staff},
-        "refine_summary":  refine_result["summary"],
-        "changes_applied": applied,
+        "room_map":         {str(r.id): dataclasses.asdict(r) for r in rooms},
+        "staff_map":        {s.name: dataclasses.asdict(s) for s in staff},
+        "refine_summary":   refine_result["summary"],
+        "changes_applied":  applied,
         "changes_rejected": rejected,
+        "affinities_saved": affinities_saved,
     }
+
+
+@app.post("/api/situation")
+async def api_situation(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required")
+    rooms_raw = body.get("rooms", [])
+    staff_raw = body.get("staff", [])
+    try:
+        result = await parse_situation(text, rooms_raw, staff_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Situation parse error: {exc}")
+    return result
 
 
 @app.post("/api/parse/schedule")

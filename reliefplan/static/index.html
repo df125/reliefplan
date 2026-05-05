@@ -126,9 +126,18 @@
     .summary-banner.warn { background:#fef9c3; border-left:5px solid #ca8a04; }
     .summary-banner.err  { background:#fee2e2; border-left:5px solid #dc2626; }
     .warn-item { border-radius:6px; padding:7px 12px; margin-bottom:6px; font-size:.84rem; }
-    .warn-error   { background:#fee2e2; border-left:4px solid #dc2626; }
-    .warn-warning { background:#fef9c3; border-left:4px solid #ca8a04; }
-    .warn-info    { background:#dbeafe; border-left:4px solid #2563eb; }
+    .warn-error      { background:#fee2e2; border-left:4px solid #dc2626; }
+    .warn-warning    { background:#fef9c3; border-left:4px solid #ca8a04; }
+    .warn-info       { background:#dbeafe; border-left:4px solid #2563eb; }
+    .warn-suggestion { background:#e0f2fe; border-left:4px solid #0284c7; }
+
+    /* ── OR card flag row ────────────────────────────────── */
+    .or-flags { display:flex; align-items:center; gap:10px; margin-top:7px;
+                flex-wrap:wrap; font-size:.77rem; color:#374151; }
+    .or-flags label { display:flex; align-items:center; gap:3px; cursor:pointer; white-space:nowrap; }
+    .or-flags .end-field { display:flex; align-items:center; gap:4px; margin-left:auto; }
+    .or-flags .end-field input { width:72px; border:1px solid #d1d5db; border-radius:4px;
+                                 padding:2px 6px; font-size:.77rem; }
 
     .hint { font-size:.75rem; color:#9ca3af; margin-top:5px; }
     .d-none { display:none!important; }
@@ -216,6 +225,8 @@
                 <th style="min-width:115px">Restrictions</th>
                 <th style="min-width:62px">Day OR</th>
                 <th style="min-width:66px">Deployed</th>
+                <th style="min-width:70px">Moonlighter</th>
+                <th style="min-width:70px">Departs</th>
                 <th style="min-width:30px"></th>
               </tr>
             </thead>
@@ -227,7 +238,23 @@
     </div>
   </div>
 
-  <!-- ── Run ────────────────────────────────────────────────── -->
+  <!-- ── Step 4: Situation Update ──────────────────────────── -->
+  <div class="step-card">
+    <div class="step-hdr">
+      <span class="step-num">4</span>
+      <strong>Situation Update <small style="font-weight:400;opacity:.8">(optional)</small></strong>
+      <span id="situation-status" style="margin-left:10px"></span>
+    </div>
+    <div class="step-body">
+      <textarea id="situation-text" class="paste-area" rows="4"
+        placeholder="Describe any last-minute changes in plain English. Examples:&#10;  • OR 44 is a complex cardiac case using fluoro&#10;  • OR 63 closed — team moved to OR 71&#10;  • Dr. Moonlighter is joining us tonight until 10pm&#10;  • Dr. Kelleher agreed to stay late"></textarea>
+      <button class="parse-btn" id="situation-btn" onclick="processSituation()">Process Update</button>
+      <p class="hint">AI-powered: requires GEMINI_API_KEY. If unavailable, edit OR cards and staff table directly.</p>
+      <div id="situation-result"></div>
+    </div>
+  </div>
+
+  <!-- ── Step 5: Generate ───────────────────────────────────── -->
   <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
 
   <!-- ── Spinner ───────────────────────────────────────────── -->
@@ -546,33 +573,39 @@ async function parseScheduleNow() {
 
   let rooms = null, warnings = [], count = 0, usedAI = false;
 
-  try {
-    const resp = await fetch("/api/parse/schedule", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({text: raw}),
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      rooms = data.rooms;   // {str_id: {attending, crna, resident}}
-      warnings = data.warnings || [];
-      count = data.count || Object.keys(rooms).length;
-      usedAI = true;
-    } else if (resp.status === 503) {
-      // No API key — fall back silently
-    } else {
-      console.warn("Schedule parse API error", resp.status);
+  // Try local parser first; only call AI if it returns zero results
+  {
+    const result = parseScheduleText(raw);
+    if ((result.count || Object.keys(result.rooms).length) > 0) {
+      rooms = result.rooms;
+      warnings = result.warnings;
+      count = result.count || Object.keys(result.rooms).length;
     }
-  } catch (e) {
-    console.warn("Schedule parse network error", e);
   }
 
   if (!rooms) {
-    // Fallback to local parser
-    const result = parseScheduleText(raw);
-    rooms = result.rooms;
-    warnings = result.warnings;
-    count = result.count;
+    try {
+      const resp = await fetch("/api/parse/schedule", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({text: raw}),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        rooms = data.rooms;
+        warnings = data.warnings || [];
+        count = data.count || Object.keys(rooms).length;
+        usedAI = true;
+      } else if (resp.status === 503) {
+        rooms = {};
+      } else {
+        console.warn("Schedule parse API error", resp.status);
+        rooms = {};
+      }
+    } catch (e) {
+      console.warn("Schedule parse network error", e);
+      rooms = {};
+    }
   }
 
   // Normalise: LLM returns {"1": {attending,crna,resident}}, local parser same shape but keyed differently
@@ -638,6 +671,13 @@ function renderORCard(id) {
   const crna = esc(sched?.crna || "");
   const res  = esc(sched?.resident || "");
 
+  // Pre-populate flags from scheduleRooms extended data if available
+  const roomData = scheduleRooms[id] || {};
+  const isComplex  = !!(roomData.flaggedComplex || roomData.complex);
+  const isFluoro   = !!(roomData.flaggedFluoro  || roomData.fluoro);
+  const isNewStart = !!(roomData.isNewStart      || roomData.newstart);
+  const estEnd     = esc(roomData.estimatedEnd   || roomData.estEnd || "");
+
   return `<div class="${cardClass}" id="or-card-${id}">
     <div class="or-card-hdr">
       <span class="or-card-id">OR ${id}</span>
@@ -659,6 +699,15 @@ function renderORCard(id) {
         <input type="text" data-field="resident" value="${res}" placeholder="optional">
       </div>
     </div>
+    <div class="or-flags">
+      <label><input type="checkbox" data-field="complex"  ${isComplex  ? "checked" : ""}> Complex</label>
+      <label><input type="checkbox" data-field="fluoro"   ${isFluoro   ? "checked" : ""}> Fluoro</label>
+      <label><input type="checkbox" data-field="newstart" ${isNewStart ? "checked" : ""}> New Start</label>
+      <div class="end-field">
+        <span style="color:#6b7280">Est. end</span>
+        <input type="text" data-field="estimatedEnd" value="${estEnd}" placeholder="e.g. 21:00">
+      </div>
+    </div>
   </div>`;
 }
 
@@ -677,30 +726,37 @@ async function parseStaffNow() {
 
   let staff = null, warnings = [], usedAI = false;
 
-  try {
-    const resp = await fetch("/api/parse/staff", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({text: raw}),
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      staff = data.staff || [];
-      warnings = data.warnings || [];
-      usedAI = true;
-    } else if (resp.status === 503) {
-      // No API key — fall back silently
-    } else {
-      console.warn("Staff parse API error", resp.status);
+  // Try local parser first; only call AI if it returns zero results
+  {
+    const result = parseStaffText(raw);
+    if (result.staff.length > 0) {
+      staff = result.staff;
+      warnings = result.warnings;
     }
-  } catch (e) {
-    console.warn("Staff parse network error", e);
   }
 
   if (!staff) {
-    const result = parseStaffText(raw);
-    staff = result.staff;
-    warnings = result.warnings;
+    try {
+      const resp = await fetch("/api/parse/staff", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({text: raw}),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        staff = data.staff || [];
+        warnings = data.warnings || [];
+        usedAI = true;
+      } else if (resp.status === 503) {
+        staff = [];
+      } else {
+        console.warn("Staff parse API error", resp.status);
+        staff = [];
+      }
+    } catch (e) {
+      console.warn("Staff parse network error", e);
+      staff = [];
+    }
   }
 
   const label = usedAI ? "✨ AI-parsed" : "local parser";
@@ -733,6 +789,8 @@ function addStaffRow(d = {}) {
   const shiftOpts = shiftList.map(s =>
     `<option value="${s}"${s===selShift?" selected":""}>${s}</option>`).join("");
 
+  const isMoonlighter = !!(d.isMoonlighter || d.is_moonlighter);
+  const departureTarget = d.departureTarget || d.departure_target || "";
   const row = document.createElement("tr");
   row.innerHTML = `
     <td><input type="text" data-field="name" value="${esc(d.name||"")}" placeholder="Dr. Smith" style="min-width:130px"></td>
@@ -755,6 +813,10 @@ function addStaffRow(d = {}) {
     <td style="text-align:center">
       <input type="checkbox" data-field="deployed"${d.alreadyDeployed?" checked":""}>
     </td>
+    <td style="text-align:center">
+      <input type="checkbox" data-field="moonlighter"${isMoonlighter?" checked":""}>
+    </td>
+    <td><input type="text" data-field="departureTarget" value="${esc(departureTarget)}" placeholder="22:00" style="width:56px"></td>
     <td><button class="btn-del" onclick="this.closest('tr').remove()">×</button></td>`;
   document.getElementById("staff-tbody").appendChild(row);
   document.getElementById("staff-preview").classList.remove("d-none");
@@ -787,6 +849,7 @@ function collectORs() {
     const get      = field => card?.querySelector(`[data-field="${field}"]`)?.value?.trim() || null;
     const floor    = OR_TO_FLOOR[id] || null;
     const building = floor ? FLOOR_TO_BUILDING[floor] : null;
+    const getCheck = field => !!(card?.querySelector(`[data-field="${field}"]`)?.checked);
     return {
       id,
       building:        building || "Legacy",
@@ -795,10 +858,10 @@ function collectORs() {
       daytimeCRNA:      get("crna"),
       daytimeResident:  get("resident"),
       isLateRunning:   true,
-      flaggedComplex:  false,
-      flaggedFluoro:   false,
-      estimatedEnd:    null,
-      isNewStart:      false,
+      flaggedComplex:  getCheck("complex"),
+      flaggedFluoro:   getCheck("fluoro"),
+      estimatedEnd:    get("estimatedEnd"),
+      isNewStart:      getCheck("newstart"),
     };
   });
 }
@@ -812,13 +875,15 @@ function collectStaff() {
     return {
       name,
       role,
-      residentLevel:   role === "resident" ? (g("level")?.value || null) : null,
-      shiftType:       g("shift")?.value   || "1-A",
+      residentLevel:    role === "resident" ? (g("level")?.value || null) : null,
+      shiftType:        g("shift")?.value   || "1-A",
       availablePast5pm: true,
-      restrictions:   (g("restrictions")?.value || "").split(",").map(s=>s.trim()).filter(Boolean),
-      affinities:     [],
-      daytimeOR:      parseInt(g("daytimeOR")?.value) || null,
+      restrictions:    (g("restrictions")?.value || "").split(",").map(s=>s.trim()).filter(Boolean),
+      affinities:      [],
+      daytimeOR:       parseInt(g("daytimeOR")?.value) || null,
       alreadyDeployed: g("deployed")?.checked || false,
+      isMoonlighter:   g("moonlighter")?.checked || false,
+      departureTarget: g("departureTarget")?.value?.trim() || "",
     };
   }).filter(Boolean);
 }
@@ -934,14 +999,16 @@ function importJSON(input) {
       // Populate staff
       renderStaffTable(
         (data.staff||[]).map(s => ({
-          name:           s.name,
-          role:           s.role,
-          residentLevel:  s.residentLevel || s.resident_level || null,
-          shiftType:      s.shiftType     || s.shift_type     || "1-A",
-          restrictions:   s.restrictions  || [],
-          affinities:     s.affinities    || [],
-          daytimeOR:      s.daytimeOR     || s.daytime_or     || null,
+          name:            s.name,
+          role:            s.role,
+          residentLevel:   s.residentLevel   || s.resident_level   || null,
+          shiftType:       s.shiftType       || s.shift_type       || "1-A",
+          restrictions:    s.restrictions    || [],
+          affinities:      s.affinities      || [],
+          daytimeOR:       s.daytimeOR       || s.daytime_or       || null,
           alreadyDeployed: s.alreadyDeployed || s.already_deployed || false,
+          isMoonlighter:   s.isMoonlighter   || s.is_moonlighter   || false,
+          departureTarget: s.departureTarget || s.departure_target || "",
         }))
       );
       document.getElementById("staff-status").innerHTML =
@@ -1159,12 +1226,134 @@ function renderRelief(data) {
   </div>`;
 }
 
+/* =====================================================================
+   API — situation update
+===================================================================== */
+async function processSituation() {
+  const text = document.getElementById("situation-text").value.trim();
+  if (!text) return;
+
+  const btn      = document.getElementById("situation-btn");
+  const statusEl = document.getElementById("situation-status");
+  const resultEl = document.getElementById("situation-result");
+  btn.disabled = true;
+  btn.textContent = "Processing…";
+  statusEl.innerHTML = `<span class="status-pill status-warn">✨ Parsing with AI…</span>`;
+  resultEl.innerHTML = "";
+
+  try {
+    const resp = await fetch("/api/situation", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text, rooms: collectORs(), staff: collectStaff()}),
+    });
+
+    if (!resp.ok) {
+      let detail = resp.statusText;
+      try { detail = (await resp.json()).detail || detail; } catch {}
+      statusEl.innerHTML = `<span class="status-pill status-err">Error: ${esc(detail)}</span>`;
+      resultEl.innerHTML = `<div class="refine-summary" style="background:#fef2f2;border-color:#dc2626">
+        AI unavailable — please edit OR cards and staff table manually.</div>`;
+      return;
+    }
+
+    const data = await resp.json();
+    const applied = [], rejected = [];
+
+    // Apply room flag updates
+    for (const upd of (data.room_flag_updates || [])) {
+      const card = document.getElementById(`or-card-${upd.or_id}`);
+      if (!card) { rejected.push(`OR ${upd.or_id}: card not found`); continue; }
+      const setCheck = (field, val) => {
+        const el = card.querySelector(`[data-field="${field}"]`);
+        if (el) el.checked = !!val;
+      };
+      const setVal = (field, val) => {
+        const el = card.querySelector(`[data-field="${field}"]`);
+        if (el && val != null) el.value = val;
+      };
+      if (upd.flaggedComplex  != null) setCheck("complex",  upd.flaggedComplex);
+      if (upd.flaggedFluoro   != null) setCheck("fluoro",   upd.flaggedFluoro);
+      if (upd.isNewStart      != null) setCheck("newstart", upd.isNewStart);
+      if (upd.estimatedEnd    != null) setVal("estimatedEnd", upd.estimatedEnd);
+      applied.push(`OR ${upd.or_id}: flags updated`);
+    }
+
+    // Apply room closures — remove OR from the late list
+    for (const cl of (data.room_closures || [])) {
+      const inp = document.getElementById("late-ors-input");
+      const current = parseLateORNumbers(inp.value);
+      const updated = current.filter(id => id !== cl.or_id);
+      inp.value = updated.join(", ");
+      applied.push(`OR ${cl.or_id}: removed from late list (closed)`);
+    }
+    if ((data.room_closures || []).length) updateLatePreview();
+
+    // Apply team moves — copy OR card fields from one room to another
+    for (const mv of (data.team_moves || [])) {
+      const fromCard = document.getElementById(`or-card-${mv.from_or}`);
+      const toCard   = document.getElementById(`or-card-${mv.to_or}`);
+      if (!fromCard || !toCard) {
+        rejected.push(`Team move OR ${mv.from_or} → OR ${mv.to_or}: one or both cards not found`);
+        continue;
+      }
+      for (const field of ["attending","crna","resident"]) {
+        const src = fromCard.querySelector(`[data-field="${field}"]`);
+        const dst = toCard.querySelector(`[data-field="${field}"]`);
+        if (src && dst) dst.value = src.value;
+      }
+      applied.push(`OR ${mv.from_or} → OR ${mv.to_or}: team moved`);
+    }
+
+    // Apply per-OR staff swaps
+    for (const sw of (data.or_staff_swaps || [])) {
+      const card = document.getElementById(`or-card-${sw.or_id}`);
+      if (!card) { rejected.push(`OR ${sw.or_id}: card not found`); continue; }
+      const fieldMap = {attending:"attending", crna:"crna", resident:"resident"};
+      const field = fieldMap[sw.role];
+      if (!field) { rejected.push(`Unknown role '${sw.role}'`); continue; }
+      const el = card.querySelector(`[data-field="${field}"]`);
+      if (el) { el.value = sw.name; applied.push(`OR ${sw.or_id}: ${sw.role} set to ${sw.name}`); }
+    }
+
+    // Add new staff members
+    for (const sa of (data.staff_additions || [])) {
+      addStaffRow({
+        name:            sa.name,
+        role:            sa.role || "attending",
+        shiftType:       sa.shiftType || "1-A",
+        isMoonlighter:   sa.isMoonlighter || false,
+        departureTarget: sa.departureTarget || "",
+        alreadyDeployed: sa.alreadyDeployed || false,
+      });
+      applied.push(`Added staff: ${sa.name} (${sa.role}${sa.isMoonlighter ? ", moonlighter" : ""})`);
+    }
+
+    // Render summary
+    statusEl.innerHTML = `<span class="status-pill status-ok">✓ Done</span>`;
+    let html = "";
+    if (data.summary)
+      html += `<div class="refine-summary">${esc(data.summary)}</div>`;
+    if (applied.length)
+      html += `<ul class="change-list applied">${applied.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
+    if (rejected.length)
+      html += `<ul class="change-list rejected">${rejected.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
+    resultEl.innerHTML = html;
+
+  } catch (err) {
+    statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Process Update";
+  }
+}
+
 function renderWarnings(data) {
   const all = data.warnings||[];
   if (!all.length) return `<div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:6px;padding:10px 16px;margin-bottom:16px"><strong>✓ No warnings or errors.</strong></div>`;
-  const cls = {error:"warn-error",warning:"warn-warning",info:"warn-info"};
-  const pfx = {error:"⛔",warning:"⚡",info:"ℹ️"};
-  const items = ["error","warning","info"].flatMap(sev =>
+  const cls = {error:"warn-error",warning:"warn-warning",info:"warn-info",suggestion:"warn-suggestion"};
+  const pfx = {error:"⛔",warning:"⚡",info:"ℹ️",suggestion:"💡"};
+  const items = ["error","warning","info","suggestion"].flatMap(sev =>
     all.filter(w=>w.severity===sev).map(w => {
       const orPart = w.or_id!=null ? `<strong>OR ${w.or_id}:</strong> ` : "";
       return `<div class="warn-item ${cls[sev]}">${pfx[sev]} ${orPart}${esc(w.message)}</div>`;
