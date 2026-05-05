@@ -2,72 +2,140 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MGH Anesthesia — 5PM Coverage Planner</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     :root {
-      --navy: #1e3a5f;
-      --legacy-bg: #dbeafe;
-      --lunder-bg: #d1fae5;
-      --unassigned-bg: #fee2e2;
+      --navy:   #1e3a5f;
+      --navy2:  #2d4f7c;
+      --legacy: #dbeafe;
+      --lunder: #d1fae5;
+      --unassigned: #fee2e2;
     }
-    body { background: #f0f4f8; font-size: 0.9rem; }
+    body { background: #f0f4f8; font-size: .9rem; }
+
+    /* ── Header ──────────────────────────────────────────── */
     .topbar { background: var(--navy); color: #fff; padding: 10px 20px;
-              display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-    .topbar-title { font-size: 1.1rem; font-weight: 700; letter-spacing: .03em; }
-    .topbar-title small { font-weight: 400; opacity: .75; font-size: .75rem; display: block; }
-    .section-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 18px; overflow: hidden; }
-    .section-card .card-hdr { background: var(--navy); color: #fff; padding: 8px 16px;
-                               display: flex; align-items: center; justify-content: space-between; }
-    .section-card .card-hdr strong { font-size: .88rem; letter-spacing: .02em; }
-    .tbl-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
-    thead th { background: #2d4f7c; color: #fff; padding: 6px 8px; white-space: nowrap; font-weight: 600; }
-    tbody tr:nth-child(even) { background: #f8fafc; }
-    tbody td { padding: 4px 6px; vertical-align: middle; border-bottom: 1px solid #e9ecef; }
-    .form-control-sm, .form-select-sm { font-size: .8rem; padding: 2px 6px; }
-    input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
-    .btn-del { background: none; border: 1px solid #dc3545; color: #dc3545; border-radius: 4px;
-               padding: 1px 7px; font-size: 1rem; line-height: 1.4; cursor: pointer; }
-    .btn-del:hover { background: #dc3545; color: #fff; }
-    .run-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px;
-               padding: 10px 36px; font-size: 1rem; font-weight: 600; cursor: pointer; }
-    .run-btn:hover { background: #1d4ed8; }
+              display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    .topbar-title { font-size:1.1rem; font-weight:700; letter-spacing:.03em; }
+    .topbar-title small { font-weight:400; opacity:.75; font-size:.75rem; display:block; }
 
-    /* Results */
-    .row-legacy { background: var(--legacy-bg) !important; }
-    .row-lunder { background: var(--lunder-bg) !important; }
-    .row-unassigned { background: var(--unassigned-bg) !important; }
-    .role-solo { color: #16a34a; font-weight: 700; }
-    .role-supv { color: #2563eb; font-weight: 700; }
-    .cont-mark { color: #16a34a; font-weight: 700; font-size: 1rem; }
-    .badge-shift { display: inline-block; background: #4b5563; color: #fff;
-                   border-radius: 3px; padding: 1px 5px; font-size: .72rem; }
-    .badge-crna   { background: #0369a1; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: .72rem; }
-    .badge-res    { background: #7c3aed; color: #fff; border-radius: 3px; padding: 1px 5px; font-size: .72rem; }
-    .summary-banner { border-radius: 8px; padding: 12px 18px; margin-bottom: 16px;
-                      display: flex; align-items: center; gap: 14px; }
-    .summary-banner.ok   { background: #dcfce7; border-left: 5px solid #16a34a; }
-    .summary-banner.warn { background: #fef9c3; border-left: 5px solid #ca8a04; }
-    .summary-banner.err  { background: #fee2e2; border-left: 5px solid #dc2626; }
-    .warn-item { border-radius: 6px; padding: 7px 12px; margin-bottom: 6px; font-size: .84rem; }
-    .warn-error   { background: #fee2e2; border-left: 4px solid #dc2626; }
-    .warn-warning { background: #fef9c3; border-left: 4px solid #ca8a04; }
-    .warn-info    { background: #dbeafe; border-left: 4px solid #2563eb; }
+    /* ── Step cards ──────────────────────────────────────── */
+    .step-card { background:#fff; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.1);
+                 margin-bottom:18px; overflow:hidden; }
+    .step-hdr { background:var(--navy); color:#fff; padding:10px 16px;
+                display:flex; align-items:center; gap:12px; }
+    .step-num { display:inline-flex; align-items:center; justify-content:center;
+                width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.2);
+                font-weight:700; font-size:.85rem; flex-shrink:0; }
+    .step-hdr strong { font-size:.9rem; }
+    .step-body { padding:14px 16px; }
 
-    .spinner-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 9999;
-                       display: flex; align-items: center; justify-content: center; }
-    .spinner-box { background: #fff; border-radius: 10px; padding: 28px 36px; text-align: center; }
-    .spinner { width: 40px; height: 40px; border: 4px solid #e5e7eb;
-               border-top-color: #2563eb; border-radius: 50%; animation: spin .7s linear infinite; margin: 0 auto 12px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .d-none { display: none !important; }
+    /* ── Paste areas ─────────────────────────────────────── */
+    textarea.paste-area { width:100%; font-family:monospace; font-size:.78rem;
+                          border:1px solid #d1d5db; border-radius:6px; padding:8px 10px;
+                          resize:vertical; background:#fafafa; }
+    textarea.paste-area:focus { outline:2px solid #2563eb; background:#fff; }
+    .parse-btn { background:var(--navy2); color:#fff; border:none; border-radius:5px;
+                 padding:5px 16px; font-size:.82rem; cursor:pointer; margin-top:6px; }
+    .parse-btn:hover { background:var(--navy); }
+    .status-pill { display:inline-flex; align-items:center; gap:5px; border-radius:20px;
+                   padding:3px 10px; font-size:.78rem; font-weight:600; margin-left:8px; }
+    .status-ok   { background:#dcfce7; color:#166534; }
+    .status-warn { background:#fef9c3; color:#854d0e; }
+    .status-err  { background:#fee2e2; color:#991b1b; }
+
+    /* ── Late OR input ───────────────────────────────────── */
+    .late-input { font-size:1rem; border:2px solid #d1d5db; border-radius:6px;
+                  padding:8px 14px; width:100%; max-width:500px; }
+    .late-input:focus { outline:none; border-color:#2563eb; }
+
+    /* ── OR preview cards ────────────────────────────────── */
+    .or-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:12px; margin-top:12px; }
+    .or-card { border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; }
+    .or-card.found    { border-left:4px solid #16a34a; }
+    .or-card.noschedule { border-left:4px solid #f59e0b; }
+    .or-card.invalid  { border-left:4px solid #dc2626; background:#fff7f7; }
+    .or-card-hdr { display:flex; align-items:center; gap:7px; margin-bottom:9px; }
+    .or-card-id  { font-size:1.1rem; font-weight:700; color:var(--navy); }
+    .or-badge    { font-size:.7rem; background:#e5e7eb; color:#4b5563;
+                   border-radius:3px; padding:1px 5px; font-weight:600; }
+    .or-badge.legacy { background:#dbeafe; color:#1e40af; }
+    .or-badge.lunder { background:#d1fae5; color:#065f46; }
+    .or-card-status { margin-left:auto; font-size:.72rem; }
+    .or-fields { display:grid; gap:5px; }
+    .or-field { display:flex; align-items:center; gap:7px; }
+    .or-field-lbl { width:72px; font-size:.73rem; color:#6b7280; flex-shrink:0; text-align:right; }
+    .or-field input { flex:1; border:1px solid #d1d5db; border-radius:4px;
+                      padding:3px 7px; font-size:.8rem; min-width:0; }
+    .or-field input:focus { outline:1px solid #2563eb; }
+
+    /* ── Staff table ─────────────────────────────────────── */
+    .staff-tbl-wrap { overflow-x:auto; margin-top:10px; }
+    .staff-tbl { width:100%; border-collapse:collapse; font-size:.8rem; }
+    .staff-tbl thead th { background:var(--navy2); color:#fff; padding:5px 8px;
+                          white-space:nowrap; font-weight:600; }
+    .staff-tbl tbody td { padding:3px 5px; vertical-align:middle; border-bottom:1px solid #f3f4f6; }
+    .staff-tbl tbody tr:hover { background:#f8fafc; }
+    .staff-tbl input, .staff-tbl select { font-size:.79rem; border:1px solid #d1d5db;
+                                           border-radius:3px; padding:2px 5px; width:100%; }
+    .btn-del { background:none; border:1px solid #dc3545; color:#dc3545;
+               border-radius:3px; padding:1px 6px; font-size:.9rem; cursor:pointer; line-height:1.4; }
+    .btn-del:hover { background:#dc3545; color:#fff; }
+    .btn-add-row { background:var(--navy2); color:#fff; border:none; border-radius:4px;
+                   padding:4px 12px; font-size:.78rem; cursor:pointer; margin-top:8px; }
+    .btn-add-row:hover { background:var(--navy); }
+
+    /* ── Run button ──────────────────────────────────────── */
+    .run-btn { background:#2563eb; color:#fff; border:none; border-radius:6px;
+               padding:11px 40px; font-size:1rem; font-weight:600; cursor:pointer;
+               display:block; margin:0 auto 28px; }
+    .run-btn:hover { background:#1d4ed8; }
+
+    /* ── Spinner ─────────────────────────────────────────── */
+    .spinner-overlay { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:9999;
+                       display:flex; align-items:center; justify-content:center; }
+    .spinner-box { background:#fff; border-radius:10px; padding:28px 36px; text-align:center; }
+    .spin { width:36px; height:36px; border:4px solid #e5e7eb; border-top-color:#2563eb;
+            border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 10px; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ── Results ─────────────────────────────────────────── */
+    .section-card { background:#fff; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.1);
+                    margin-bottom:18px; overflow:hidden; }
+    .card-hdr { background:var(--navy); color:#fff; padding:8px 16px; }
+    .card-hdr strong { font-size:.88rem; color:#fff; }
+    .tbl-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    thead th { background:var(--navy2); color:#fff; padding:6px 8px; white-space:nowrap; }
+    tbody td { padding:4px 8px; vertical-align:middle; border-bottom:1px solid #f3f4f6; }
+    .row-legacy { background:var(--legacy)!important; }
+    .row-lunder { background:var(--lunder)!important; }
+    .row-unassigned { background:var(--unassigned)!important; }
+    .role-solo { color:#16a34a; font-weight:700; }
+    .role-supv { color:#2563eb; font-weight:700; }
+    .cont-mark { color:#16a34a; font-weight:700; }
+    .badge-shift { display:inline-block; background:#4b5563; color:#fff;
+                   border-radius:3px; padding:1px 5px; font-size:.7rem; }
+    .badge-crna  { background:#0369a1; color:#fff; border-radius:3px; padding:1px 5px; font-size:.7rem; }
+    .badge-res   { background:#7c3aed; color:#fff; border-radius:3px; padding:1px 5px; font-size:.7rem; }
+    .summary-banner { border-radius:8px; padding:12px 18px; margin-bottom:16px;
+                      display:flex; align-items:center; gap:14px; }
+    .summary-banner.ok   { background:#dcfce7; border-left:5px solid #16a34a; }
+    .summary-banner.warn { background:#fef9c3; border-left:5px solid #ca8a04; }
+    .summary-banner.err  { background:#fee2e2; border-left:5px solid #dc2626; }
+    .warn-item { border-radius:6px; padding:7px 12px; margin-bottom:6px; font-size:.84rem; }
+    .warn-error   { background:#fee2e2; border-left:4px solid #dc2626; }
+    .warn-warning { background:#fef9c3; border-left:4px solid #ca8a04; }
+    .warn-info    { background:#dbeafe; border-left:4px solid #2563eb; }
+
+    .hint { font-size:.75rem; color:#9ca3af; margin-top:5px; }
+    .d-none { display:none!important; }
   </style>
 </head>
 <body>
 
-<!-- ── Header ─────────────────────────────────────────────────── -->
 <div class="topbar">
   <div class="topbar-title">
     MGH Anesthesia — 5PM Coverage Planner
@@ -82,86 +150,105 @@
   </div>
 </div>
 
-<div class="container-fluid py-3" style="max-width:1700px">
+<div class="container-fluid py-3" style="max-width:1400px">
 
-  <!-- ── OR Table ─────────────────────────────────────────────── -->
-  <div class="section-card">
-    <div class="card-hdr">
-      <strong>Late-Running Operating Rooms</strong>
-      <button class="btn btn-sm btn-light" onclick="addORRow()">+ Add OR</button>
+  <!-- ── Step 1: OR Schedule ─────────────────────────────────── -->
+  <div class="step-card">
+    <div class="step-hdr">
+      <span class="step-num">1</span>
+      <strong>Paste today's OR schedule</strong>
+      <span id="schedule-status"></span>
     </div>
-    <div class="tbl-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="min-width:58px">OR ID</th>
-            <th style="min-width:90px">Building</th>
-            <th style="min-width:95px">Floor</th>
-            <th style="min-width:150px">Daytime Attending</th>
-            <th style="min-width:120px">Daytime CRNA</th>
-            <th style="min-width:130px">Daytime Resident</th>
-            <th style="min-width:44px" title="Late Running">Late</th>
-            <th style="min-width:44px" title="Complex case — resident preferred">CPX</th>
-            <th style="min-width:44px" title="Fluoro case — no pregnant staff">FLU</th>
-            <th style="min-width:80px">Est. End</th>
-            <th style="min-width:44px" title="Case not yet started">New</th>
-            <th style="min-width:32px"></th>
-          </tr>
-        </thead>
-        <tbody id="or-tbody"></tbody>
-      </table>
+    <div class="step-body">
+      <textarea id="schedule-paste" class="paste-area" rows="7"
+        placeholder="Paste your OR schedule here (copy from spreadsheet or scheduling system).&#10;&#10;Expected columns (any order, any header name):  OR / Room   Attending   CRNA   Resident&#10;&#10;Example:&#10;OR&#9;Attending&#9;CRNA&#9;Resident&#10;4&#9;Patel&#9;Jones&#10;5&#9;Smith&#9;&#9;Kim&#10;44&#9;Rivera&#9;Santos&#10;63&#9;Chen&#9;&#9;Lee"></textarea>
+      <button class="parse-btn" onclick="parseScheduleNow()">Parse Schedule</button>
+      <p class="hint">Tip: Tab-separated (copy/paste from Excel) works best. Column headers are auto-detected.</p>
     </div>
   </div>
 
-  <!-- ── Staff Table ──────────────────────────────────────────── -->
-  <div class="section-card">
-    <div class="card-hdr">
-      <strong>After-5PM Staff</strong>
-      <button class="btn btn-sm btn-light" onclick="addStaffRow()">+ Add Staff</button>
+  <!-- ── Step 2: Late ORs ────────────────────────────────────── -->
+  <div class="step-card">
+    <div class="step-hdr">
+      <span class="step-num">2</span>
+      <strong>Which ORs are running late?</strong>
     </div>
-    <div class="tbl-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="min-width:155px">Name</th>
-            <th style="min-width:95px">Role</th>
-            <th style="min-width:75px" title="Resident level (residents only)">Level</th>
-            <th style="min-width:125px">Shift Type</th>
-            <th style="min-width:110px" title="Comma-separated, e.g. no-fluoro">Restrictions</th>
-            <th style="min-width:120px" title="Comma-separated, e.g. Legacy, L3">Affinities</th>
-            <th style="min-width:68px" title="OR ID where this person worked during the day">Day OR</th>
-            <th style="min-width:68px" title="2-A / 3p-10p staff already placed in a room before 5pm">Deployed</th>
-            <th style="min-width:32px"></th>
-          </tr>
-        </thead>
-        <tbody id="staff-tbody"></tbody>
-      </table>
+    <div class="step-body">
+      <input type="text" id="late-ors-input" class="late-input"
+        placeholder="e.g.  44, 63, 71, 82"
+        oninput="updateLatePreview()" autocomplete="off">
+      <p class="hint">Enter OR numbers separated by spaces or commas. Provider info is filled from the schedule above — edit any field below if needed.</p>
+      <div id="late-or-cards" class="or-cards"></div>
     </div>
   </div>
 
-  <!-- ── Run button ───────────────────────────────────────────── -->
-  <div style="text-align:right;margin-bottom:28px">
-    <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
+  <!-- ── Step 3: After-5PM Staff ─────────────────────────────── -->
+  <div class="step-card">
+    <div class="step-hdr">
+      <span class="step-num">3</span>
+      <strong>After-5PM staff</strong>
+      <span id="staff-status"></span>
+    </div>
+    <div class="step-body">
+      <textarea id="staff-paste" class="paste-area" rows="6"
+        placeholder="Paste your after-5pm staff list here (copy from spreadsheet or call schedule).&#10;&#10;Expected columns:  Name   Role   Shift   Daytime OR (optional)   Deployed (optional)&#10;&#10;Example:&#10;Name&#9;Role&#9;Shift&#9;Daytime OR&#9;Deployed&#10;Johnson&#9;attending&#9;1-A&#10;Williams&#9;attending&#9;3p-10p&#9;63&#9;yes&#10;Jones&#9;CRNA&#9;CRNA-7a-8p&#9;44&#9;yes&#10;Kim&#9;resident&#9;3p-10p&#9;5"></textarea>
+      <button class="parse-btn" onclick="parseStaffNow()">Parse Staff</button>
+      <p class="hint">Shift keywords recognised: 1-A, 2-A, 3p-10p, 7a-7p, CRNA-7a-8p, CRNA-5p-8p, R2/R3/R4. "Deployed" = already placed in a room before 5pm.</p>
+      <div id="staff-preview" class="d-none">
+        <div class="staff-tbl-wrap">
+          <table class="staff-tbl">
+            <thead>
+              <tr>
+                <th style="min-width:150px">Name</th>
+                <th style="min-width:90px">Role</th>
+                <th style="min-width:65px">Level</th>
+                <th style="min-width:115px">Shift</th>
+                <th style="min-width:115px">Restrictions</th>
+                <th style="min-width:62px">Day OR</th>
+                <th style="min-width:66px">Deployed</th>
+                <th style="min-width:30px"></th>
+              </tr>
+            </thead>
+            <tbody id="staff-tbody"></tbody>
+          </table>
+        </div>
+        <button class="btn-add-row" onclick="addStaffRow()">+ Add staff member</button>
+      </div>
+    </div>
   </div>
 
-  <!-- ── Spinner ──────────────────────────────────────────────── -->
+  <!-- ── Run ────────────────────────────────────────────────── -->
+  <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
+
+  <!-- ── Spinner ───────────────────────────────────────────── -->
   <div id="spinner" class="spinner-overlay d-none">
-    <div class="spinner-box">
-      <div class="spinner"></div>
-      Generating plan…
-    </div>
+    <div class="spinner-box"><div class="spin"></div>Generating plan…</div>
   </div>
 
-  <!-- ── Results ──────────────────────────────────────────────── -->
+  <!-- ── Results ───────────────────────────────────────────── -->
   <div id="results-section" class="d-none"></div>
 
 </div><!-- /container -->
 
 <script>
 /* =====================================================================
-   Constants
+   Zone maps
 ===================================================================== */
-const FLOORS = { Legacy: ["THOR","Gray","Jackson"], Lunder: ["L2","L3","L4"] };
+const OR_TO_FLOOR = {};
+for (const id of [4,14,15,16,43,44])                         OR_TO_FLOOR[id] = "THOR";
+for (const id of [5,6,7,10,11])                              OR_TO_FLOOR[id] = "Gray";
+for (const id of [12,32,33,34,35,36,37,38,39,40,41,42])     OR_TO_FLOOR[id] = "Jackson";
+for (let i = 51; i <= 54; i++)                               OR_TO_FLOOR[i]  = "L2";
+for (let i = 61; i <= 73; i++)                               OR_TO_FLOOR[i]  = "L3";
+for (let i = 81; i <= 91; i++)                               OR_TO_FLOOR[i]  = "L4";
+
+const FLOOR_TO_BUILDING = {
+  THOR:"Legacy", Gray:"Legacy", Jackson:"Legacy",
+  L2:"Lunder",   L3:"Lunder",   L4:"Lunder",
+};
+
+const FLOOR_ORDER = {THOR:0, Gray:1, Jackson:2, L2:3, L3:4, L4:5};
+
 const SHIFTS = {
   attending: ["1-A","2-A","7a-7p","3p-10p"],
   CRNA:      ["CRNA-7a-8p","CRNA-5p-8p"],
@@ -176,68 +263,315 @@ function esc(v) {
 }
 
 /* =====================================================================
-   OR table
+   Application state
 ===================================================================== */
-function addORRow(d = {}) {
-  const building = d.building || "Legacy";
-  const floorList = FLOORS[building] || FLOORS.Legacy;
-  const selFloor  = d.floor || floorList[0];
-  const floorOpts = floorList.map(f =>
-    `<option value="${f}"${f===selFloor?" selected":""}>${f}</option>`).join("");
+// scheduleRooms: orId → {attending, crna, resident}  (from paste)
+let scheduleRooms = {};
 
-  const row = document.createElement("tr");
-  row.innerHTML = `
-    <td><input type="number" name="id" class="form-control form-control-sm"
-        style="width:55px" value="${esc(d.id||"")}" min="1" max="100" placeholder="#"></td>
-    <td>
-      <select name="building" class="form-select form-select-sm" onchange="onBuildingChange(this)">
-        ${["Legacy","Lunder"].map(b=>`<option value="${b}"${b===building?" selected":""}>${b}</option>`).join("")}
-      </select>
-    </td>
-    <td>
-      <select name="floor" class="form-select form-select-sm" style="min-width:80px">
-        ${floorOpts}
-      </select>
-    </td>
-    <td><input type="text" name="daytimeAttending" class="form-control form-control-sm"
-        value="${esc(d.daytimeAttending||"")}" placeholder="Dr. Smith"></td>
-    <td><input type="text" name="daytimeCRNA" class="form-control form-control-sm"
-        value="${esc(d.daytimeCRNA||"")}" placeholder="optional"></td>
-    <td><input type="text" name="daytimeResident" class="form-control form-control-sm"
-        value="${esc(d.daytimeResident||"")}" placeholder="optional"></td>
-    <td style="text-align:center">
-      <input type="checkbox" name="isLateRunning"${d.isLateRunning!==false?" checked":""}>
-    </td>
-    <td style="text-align:center">
-      <input type="checkbox" name="flaggedComplex"${d.flaggedComplex?" checked":""}>
-    </td>
-    <td style="text-align:center">
-      <input type="checkbox" name="flaggedFluoro"${d.flaggedFluoro?" checked":""}>
-    </td>
-    <td><input type="text" name="estimatedEnd" class="form-control form-control-sm"
-        style="width:70px" value="${esc(d.estimatedEnd||"")}" placeholder="8pm"></td>
-    <td style="text-align:center">
-      <input type="checkbox" name="isNewStart"${d.isNewStart?" checked":""}>
-    </td>
-    <td><button class="btn-del" onclick="this.closest('tr').remove()">×</button></td>`;
-  document.getElementById("or-tbody").appendChild(row);
-}
+/* =====================================================================
+   OR schedule parser
+===================================================================== */
+function parseScheduleText(raw) {
+  const rooms = {}, warnings = [];
+  if (!raw.trim()) return {rooms, warnings};
 
-function onBuildingChange(sel) {
-  const floorSel = sel.closest("tr").querySelector("[name='floor']");
-  const floors = FLOORS[sel.value] || [];
-  floorSel.innerHTML = floors.map(f=>`<option value="${f}">${f}</option>`).join("");
+  const lines = raw.split(/\r?\n/).map(l => l.trimEnd()).filter(l => l.trim());
+  if (!lines.length) return {rooms, warnings};
+
+  // Detect delimiter: tabs win if avg tab-count ≥ 1
+  const tabAvg = lines.map(l => (l.match(/\t/g)||[]).length)
+                      .reduce((a,b)=>a+b,0) / lines.length;
+  const delim = tabAvg >= 1 ? "\t" : ",";
+
+  const rows = lines.map(l => l.split(delim).map(c => c.trim()));
+
+  // Find header row: first row with ≥2 keyword matches
+  const HDR_KW = ["room","or","suite","attending","crna","nurse","resident","ca","anesthes","service","case","surgeon"];
+  let hdrIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 4); i++) {
+    const txt = rows[i].join(" ").toLowerCase();
+    if (HDR_KW.filter(kw => txt.includes(kw)).length >= 2) { hdrIdx = i; break; }
+  }
+
+  // Map columns from headers (or default positions)
+  let col = {orId: 0, att: -1, crna: -1, res: -1};
+  if (hdrIdx >= 0) {
+    col = {orId: -1, att: -1, crna: -1, res: -1};
+    rows[hdrIdx].forEach((h, i) => {
+      const hl = h.toLowerCase();
+      if (col.orId < 0 && /\bor\b|\broom\b|\bsuite\b/.test(hl)) col.orId = i;
+      if (col.att  < 0 && /attend|anes\s*md|anesth/.test(hl))    col.att  = i;
+      if (col.crna < 0 && /crna|nurse\s*anesth|\baa\b/.test(hl)) col.crna = i;
+      if (col.res  < 0 && /resid|ca-?\d|intern|fellow/.test(hl)) col.res  = i;
+    });
+    if (col.orId < 0) col.orId = 0;
+  }
+
+  const startRow = hdrIdx >= 0 ? hdrIdx + 1 : 0;
+  let parsed = 0;
+
+  for (let i = startRow; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.every(c => !c)) continue;
+
+    // Extract OR number: take first 1-2 digit number in the cell
+    const orCell = row[col.orId] || "";
+    const m = orCell.match(/\b(\d{1,2})\b/);
+    if (!m) continue;
+    const id = parseInt(m[1]);
+    if (id < 1 || id > 99) continue;
+
+    const get = c => (c >= 0 && c < row.length ? row[c] : "") || "";
+    rooms[id] = {
+      attending: get(col.att)  || null,
+      crna:      get(col.crna) || null,
+      resident:  get(col.res)  || null,
+    };
+    parsed++;
+  }
+
+  if (parsed === 0)
+    warnings.push("No OR rows found — check that the paste includes a header row with columns like 'OR', 'Attending', 'CRNA'.");
+  else if (hdrIdx < 0)
+    warnings.push("No column headers found — used default column positions (OR in col 1, Attending col 2, CRNA col 3, Resident col 4).");
+
+  return {rooms, warnings, count: parsed};
 }
 
 /* =====================================================================
-   Staff table
+   Staff parser
 ===================================================================== */
+function inferRoleAndShift(text) {
+  const T = text.toUpperCase();
+  let role = "attending", residentLevel = null, shiftType = "1-A";
+
+  if (/CRNA|NURSE[\s._-]?ANESTH|\bAA\b/.test(T)) {
+    role = "CRNA";
+  } else if (/\bR[234]\b|CA-?[123]|\bRESIDENT\b|\bINTERN\b/.test(T)) {
+    role = "resident";
+    const m = T.match(/\b(R[234])\b/) || T.match(/CA-?([123])/);
+    if (m) residentLevel = m[0].startsWith("CA") ? "R" + m[0].slice(-1) : m[0].slice(0, 2);
+    else    residentLevel = "R3";
+  }
+
+  if (role === "attending") {
+    if      (/\b1-?A\b|FIRST[\s-]?CALL/.test(T))  shiftType = "1-A";
+    else if (/\b2-?A\b|SECOND[\s-]?CALL/.test(T)) shiftType = "2-A";
+    else if (/3[\s-]?P|3PM|3-10|3P10/.test(T))    shiftType = "3p-10p";
+    else if (/7[\s-]?A|STAY|DAY[\s-]?STAY/.test(T)) shiftType = "7a-7p";
+  } else if (role === "CRNA") {
+    shiftType = /5[\s-]?P|5PM|5-8/.test(T) ? "CRNA-5p-8p" : "CRNA-7a-8p";
+  } else {
+    shiftType = "3p-10p";
+  }
+
+  return {role, residentLevel, shiftType};
+}
+
+function parseStaffText(raw) {
+  const staff = [], warnings = [];
+  if (!raw.trim()) return {staff, warnings};
+
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  if (!lines.length) return {staff, warnings};
+
+  const hasTabs = lines.some(l => l.includes("\t"));
+
+  if (hasTabs) {
+    const rows = lines.map(l => l.split("\t").map(c => c.trim()));
+
+    // Detect header row
+    const firstTxt = rows[0].join(" ").toLowerCase();
+    const hasHdr = /name|role|shift|attend|crna/.test(firstTxt);
+    let col = {name:0, role:1, shift:2, or:3, dep:4, restr:5};
+
+    if (hasHdr) {
+      col = {name:-1, role:-1, shift:-1, or:-1, dep:-1, restr:-1};
+      rows[0].forEach((h, i) => {
+        const hl = h.toLowerCase();
+        if (col.name  < 0 && /name|provider/.test(hl))        col.name  = i;
+        if (col.role  < 0 && /role|type/.test(hl))            col.role  = i;
+        if (col.shift < 0 && /shift|schedule/.test(hl))       col.shift = i;
+        if (col.or    < 0 && /\bor\b|room|daytime/.test(hl))  col.or    = i;
+        if (col.dep   < 0 && /deploy|placed|already/.test(hl)) col.dep  = i;
+        if (col.restr < 0 && /restrict|fluoro/.test(hl))      col.restr = i;
+      });
+      if (col.name < 0) col.name = 0;
+    }
+
+    const start = hasHdr ? 1 : 0;
+    for (let i = start; i < rows.length; i++) {
+      const r = rows[i];
+      const g = c => (c >= 0 && c < r.length ? r[c] : "") || "";
+      const name = g(col.name) || r[0];
+      if (!name) continue;
+
+      const roleRaw  = g(col.role);
+      const shiftRaw = g(col.shift);
+      const {role, residentLevel, shiftType} = inferRoleAndShift(name + " " + roleRaw + " " + shiftRaw);
+
+      const depVal = g(col.dep);
+      staff.push({
+        name,
+        role,
+        residentLevel,
+        shiftType,
+        availablePast5pm: true,
+        restrictions: g(col.restr).split(",").map(s=>s.trim()).filter(Boolean),
+        affinities: [],
+        daytimeOR: parseInt(g(col.or)) || null,
+        alreadyDeployed: /yes|true|\bx\b|deploy|placed|✓/i.test(depVal),
+      });
+    }
+  } else {
+    // Line-by-line pattern matching
+    for (const line of lines) {
+      if (!line.trim() || /^[-=]+$/.test(line)) continue; // skip separator lines
+
+      const {role, residentLevel, shiftType} = inferRoleAndShift(line);
+      const orMatch = line.match(/\bOR\s*(\d{1,2})\b/i) || line.match(/\b(\d{1,2})\b(?![-\/])/);
+      const daytimeOR  = orMatch ? parseInt(orMatch[1]) : null;
+      const alreadyDeployed = /deploy|placed|in\s*room|\(in\)/i.test(line);
+
+      // Strip keywords to extract name
+      let name = line
+        .replace(/\b(1-?A|2-?A|3[Pp]-?10[Pp]|7[Aa]-?7[Pp])\b/gi, "")
+        .replace(/\b(CRNA-7[Aa]-8[Pp]|CRNA-5[Pp]-8[Pp]|CRNA)\b/gi, "")
+        .replace(/\b(attending|resident|R[234]|CA-?[123])\b/gi, "")
+        .replace(/\b(first[\s-]?call|second[\s-]?call|stay|deployed|in[\s-]room)\b/gi, "")
+        .replace(/\bOR\s*\d+\b/gi, "")
+        .replace(/\(.*?\)/g, "")
+        .replace(/[-–—:,;|]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (!name) { warnings.push(`Could not parse line: "${line}"`); continue; }
+
+      staff.push({
+        name, role, residentLevel, shiftType,
+        availablePast5pm: true,
+        restrictions: [], affinities: [],
+        daytimeOR, alreadyDeployed,
+      });
+    }
+  }
+
+  return {staff, warnings};
+}
+
+/* =====================================================================
+   UI — schedule
+===================================================================== */
+function parseScheduleNow() {
+  const raw = document.getElementById("schedule-paste").value;
+  const {rooms, warnings, count} = parseScheduleText(raw);
+  scheduleRooms = rooms;
+
+  const badge = warnings.length
+    ? `<span class="status-pill status-warn">⚡ ${count} rooms — ${warnings.length} warning(s)</span>`
+    : count > 0
+      ? `<span class="status-pill status-ok">✓ ${count} rooms parsed</span>`
+      : `<span class="status-pill status-err">✗ No rooms found</span>`;
+  document.getElementById("schedule-status").innerHTML = badge;
+
+  updateLatePreview(); // refresh OR cards with new data
+}
+
+/* =====================================================================
+   UI — late OR cards
+===================================================================== */
+function parseLateORNumbers(text) {
+  const nums = (text.match(/\d+/g) || []).map(Number);
+  return [...new Set(nums)].filter(n => n >= 1 && n <= 99);
+}
+
+function updateLatePreview() {
+  const raw = document.getElementById("late-ors-input").value;
+  const ids = parseLateORNumbers(raw);
+  const container = document.getElementById("late-or-cards");
+
+  if (!ids.length) { container.innerHTML = ""; return; }
+
+  container.innerHTML = ids.map(id => renderORCard(id)).join("");
+}
+
+function renderORCard(id) {
+  const floor    = OR_TO_FLOOR[id] || null;
+  const building = floor ? FLOOR_TO_BUILDING[floor] : null;
+  const sched    = scheduleRooms[id];
+
+  let cardClass = "or-card ";
+  let statusHtml = "";
+
+  if (!floor) {
+    cardClass += "invalid";
+    statusHtml = `<span class="or-card-status" style="color:#dc2626">⚠ unknown OR</span>`;
+  } else if (sched) {
+    cardClass += "found";
+    statusHtml = `<span class="or-card-status" style="color:#16a34a">✓ in schedule</span>`;
+  } else {
+    cardClass += "noschedule";
+    statusHtml = `<span class="or-card-status" style="color:#b45309">⚠ not in schedule</span>`;
+  }
+
+  const bldgClass = building === "Legacy" ? "legacy" : "lunder";
+  const att = esc(sched?.attending || "");
+  const crna = esc(sched?.crna || "");
+  const res  = esc(sched?.resident || "");
+
+  return `<div class="${cardClass}" id="or-card-${id}">
+    <div class="or-card-hdr">
+      <span class="or-card-id">OR ${id}</span>
+      ${floor    ? `<span class="or-badge">${esc(floor)}</span>` : ""}
+      ${building ? `<span class="or-badge ${bldgClass}">${esc(building)}</span>` : ""}
+      ${statusHtml}
+    </div>
+    <div class="or-fields">
+      <div class="or-field">
+        <span class="or-field-lbl">Attending</span>
+        <input type="text" data-field="attending" value="${att}" placeholder="name or blank">
+      </div>
+      <div class="or-field">
+        <span class="or-field-lbl">CRNA</span>
+        <input type="text" data-field="crna" value="${crna}" placeholder="optional">
+      </div>
+      <div class="or-field">
+        <span class="or-field-lbl">Resident</span>
+        <input type="text" data-field="resident" value="${res}" placeholder="optional">
+      </div>
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   UI — staff table
+===================================================================== */
+function parseStaffNow() {
+  const raw = document.getElementById("staff-paste").value;
+  const {staff, warnings} = parseStaffText(raw);
+
+  const badge = warnings.length
+    ? `<span class="status-pill status-warn">⚡ ${staff.length} staff — ${warnings.length} line(s) skipped</span>`
+    : staff.length > 0
+      ? `<span class="status-pill status-ok">✓ ${staff.length} staff parsed</span>`
+      : `<span class="status-pill status-err">✗ No staff found</span>`;
+  document.getElementById("staff-status").innerHTML = badge;
+
+  renderStaffTable(staff);
+}
+
+function renderStaffTable(staffList) {
+  const tbody = document.getElementById("staff-tbody");
+  tbody.innerHTML = "";
+  staffList.forEach(s => addStaffRow(s));
+  document.getElementById("staff-preview").classList.toggle("d-none", staffList.length === 0);
+}
+
 function addStaffRow(d = {}) {
   const role      = d.role || "attending";
   const shiftList = SHIFTS[role] || SHIFTS.attending;
   const selShift  = d.shiftType || shiftList[0];
   const level     = d.residentLevel || "R3";
-
   const levelOpts = ["R2","R3","R4"].map(l =>
     `<option value="${l}"${l===level?" selected":""}>${l}</option>`).join("");
   const shiftOpts = shiftList.map(s =>
@@ -245,58 +579,45 @@ function addStaffRow(d = {}) {
 
   const row = document.createElement("tr");
   row.innerHTML = `
-    <td><input type="text" name="name" class="form-control form-control-sm"
-        value="${esc(d.name||"")}" placeholder="Dr. Smith"></td>
+    <td><input type="text" data-field="name" value="${esc(d.name||"")}" placeholder="Dr. Smith" style="min-width:130px"></td>
     <td>
-      <select name="role" class="form-select form-select-sm" onchange="onRoleChange(this)">
-        ${["attending","CRNA","resident"].map(r=>
+      <select data-field="role" onchange="onRoleChange(this)">
+        ${["attending","CRNA","resident"].map(r =>
           `<option value="${r}"${r===role?" selected":""}>${r}</option>`).join("")}
       </select>
     </td>
     <td>
-      <select name="residentLevel" class="form-select form-select-sm"
-          ${role!=="resident"?' disabled style="opacity:.4"':""}>
+      <select data-field="level" ${role!=="resident"?' disabled style="opacity:.4"':""}>
         ${levelOpts}
       </select>
     </td>
     <td>
-      <select name="shiftType" class="form-select form-select-sm">
-        ${shiftOpts}
-      </select>
+      <select data-field="shift">${shiftOpts}</select>
     </td>
-    <td><input type="text" name="restrictions" class="form-control form-control-sm"
-        value="${esc((d.restrictions||[]).join(", "))}" placeholder="no-fluoro"></td>
-    <td><input type="text" name="affinities" class="form-control form-control-sm"
-        value="${esc((d.affinities||[]).join(", "))}" placeholder="Legacy, L3"></td>
-    <td><input type="number" name="daytimeOR" class="form-control form-control-sm"
-        style="width:58px" value="${esc(d.daytimeOR||"")}" placeholder="#"></td>
+    <td><input type="text" data-field="restrictions" value="${esc((d.restrictions||[]).join(", "))}" placeholder="no-fluoro" style="min-width:90px"></td>
+    <td><input type="number" data-field="daytimeOR" value="${esc(d.daytimeOR||"")}" placeholder="#" style="width:56px"></td>
     <td style="text-align:center">
-      <input type="checkbox" name="alreadyDeployed"${d.alreadyDeployed?" checked":""}>
+      <input type="checkbox" data-field="deployed"${d.alreadyDeployed?" checked":""}>
     </td>
     <td><button class="btn-del" onclick="this.closest('tr').remove()">×</button></td>`;
   document.getElementById("staff-tbody").appendChild(row);
+  document.getElementById("staff-preview").classList.remove("d-none");
 }
 
 function onRoleChange(sel) {
-  const row   = sel.closest("tr");
-  const role  = sel.value;
-
-  // Update shift type options
-  const shiftSel = row.querySelector("[name='shiftType']");
+  const row  = sel.closest("tr");
+  const role = sel.value;
+  const shiftSel = row.querySelector("[data-field='shift']");
   shiftSel.innerHTML = (SHIFTS[role]||SHIFTS.attending)
     .map(s=>`<option value="${s}">${s}</option>`).join("");
-
-  // Enable/disable resident level
-  const lvlSel = row.querySelector("[name='residentLevel']");
+  const lvl = row.querySelector("[data-field='level']");
   if (role === "resident") {
-    lvlSel.disabled = false;
-    lvlSel.style.opacity = "";
-    lvlSel.innerHTML = `<option value="R2">R2</option>
+    lvl.disabled = false; lvl.style.opacity = "";
+    lvl.innerHTML = `<option value="R2">R2</option>
       <option value="R3" selected>R3</option><option value="R4">R4</option>`;
   } else {
-    lvlSel.disabled = true;
-    lvlSel.style.opacity = ".4";
-    lvlSel.innerHTML = `<option value="">—</option>`;
+    lvl.disabled = true; lvl.style.opacity = ".4";
+    lvl.innerHTML = `<option value="">—</option>`;
   }
 }
 
@@ -304,56 +625,56 @@ function onRoleChange(sel) {
    Data collection
 ===================================================================== */
 function collectORs() {
-  return Array.from(document.querySelectorAll("#or-tbody tr")).map(row => {
-    const f = n => row.querySelector(`[name="${n}"]`);
-    const id = parseInt(f("id").value, 10);
-    if (!id) return null;
+  const ids = parseLateORNumbers(document.getElementById("late-ors-input").value);
+  return ids.map(id => {
+    const card     = document.getElementById(`or-card-${id}`);
+    const get      = field => card?.querySelector(`[data-field="${field}"]`)?.value?.trim() || null;
+    const floor    = OR_TO_FLOOR[id] || null;
+    const building = floor ? FLOOR_TO_BUILDING[floor] : null;
     return {
       id,
-      building:         f("building").value,
-      floor:            f("floor").value,
-      daytimeAttending: f("daytimeAttending").value.trim() || null,
-      daytimeCRNA:      f("daytimeCRNA").value.trim()      || null,
-      daytimeResident:  f("daytimeResident").value.trim()  || null,
-      isLateRunning:    f("isLateRunning").checked,
-      flaggedComplex:   f("flaggedComplex").checked,
-      flaggedFluoro:    f("flaggedFluoro").checked,
-      estimatedEnd:     f("estimatedEnd").value.trim()     || null,
-      isNewStart:       f("isNewStart").checked,
+      building:        building || "Legacy",
+      floor:           floor    || "Unknown",
+      daytimeAttending: get("attending"),
+      daytimeCRNA:      get("crna"),
+      daytimeResident:  get("resident"),
+      isLateRunning:   true,
+      flaggedComplex:  false,
+      flaggedFluoro:   false,
+      estimatedEnd:    null,
+      isNewStart:      false,
     };
-  }).filter(Boolean);
+  });
 }
 
 function collectStaff() {
   return Array.from(document.querySelectorAll("#staff-tbody tr")).map(row => {
-    const f = n => row.querySelector(`[name="${n}"]`);
-    const name = f("name").value.trim();
+    const g = f => row.querySelector(`[data-field="${f}"]`);
+    const name = g("name")?.value?.trim();
     if (!name) return null;
-    const role     = f("role").value;
-    const daytimeOR = parseInt(f("daytimeOR").value, 10) || null;
-    const split     = v => v.split(",").map(s=>s.trim()).filter(Boolean);
+    const role = g("role")?.value || "attending";
     return {
       name,
       role,
-      residentLevel:   role === "resident" ? f("residentLevel").value : null,
-      shiftType:       f("shiftType").value,
+      residentLevel:   role === "resident" ? (g("level")?.value || null) : null,
+      shiftType:       g("shift")?.value   || "1-A",
       availablePast5pm: true,
-      restrictions:    split(f("restrictions").value),
-      affinities:      split(f("affinities").value),
-      daytimeOR,
-      alreadyDeployed: f("alreadyDeployed").checked,
+      restrictions:   (g("restrictions")?.value || "").split(",").map(s=>s.trim()).filter(Boolean),
+      affinities:     [],
+      daytimeOR:      parseInt(g("daytimeOR")?.value) || null,
+      alreadyDeployed: g("deployed")?.checked || false,
     };
   }).filter(Boolean);
 }
 
 /* =====================================================================
-   API calls
+   API — run plan
 ===================================================================== */
 async function runPlan() {
   const rooms = collectORs();
   const staff = collectStaff();
-  if (!rooms.length) { alert("Add at least one OR first."); return; }
-  if (!staff.length) { alert("Add at least one staff member first."); return; }
+  if (!rooms.length) { alert("Enter at least one late OR number in step 2."); return; }
+  if (!staff.length) { alert("Add at least one staff member in step 3."); return; }
 
   document.getElementById("spinner").classList.remove("d-none");
   document.getElementById("results-section").classList.add("d-none");
@@ -361,8 +682,8 @@ async function runPlan() {
   try {
     const resp = await fetch("/api/plan", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rooms, staff }),
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({rooms, staff}),
     });
     const data = await resp.json();
     if (!resp.ok) { alert("Error: " + (data.detail || resp.statusText)); return; }
@@ -374,30 +695,47 @@ async function runPlan() {
   }
 }
 
+/* =====================================================================
+   Sample / Import / Export
+===================================================================== */
 async function loadSample() {
   try {
     const data = await fetch("/api/sample").then(r => r.json());
-    document.getElementById("or-tbody").innerHTML    = "";
-    document.getElementById("staff-tbody").innerHTML = "";
-    (data.rooms||[]).forEach(r => addORRow(r));
-    (data.staff||[]).forEach(s => addStaffRow(s));
+
+    // Build schedule TSV from sample rooms
+    const schLines = ["OR\tAttending\tCRNA\tResident"];
+    (data.rooms || []).forEach(r => {
+      schLines.push([r.id, r.daytimeAttending||"", r.daytimeCRNA||"", r.daytimeResident||""].join("\t"));
+    });
+    document.getElementById("schedule-paste").value = schLines.join("\n");
+    parseScheduleNow();
+
+    // Set late ORs
+    const lateIds = (data.rooms||[]).filter(r=>r.isLateRunning!==false).map(r=>r.id).join(", ");
+    document.getElementById("late-ors-input").value = lateIds;
+    updateLatePreview();
+
+    // Build staff TSV from sample staff
+    const stLines = ["Name\tRole\tShift\tDaytime OR\tDeployed"];
+    (data.staff||[]).forEach(s => {
+      stLines.push([s.name, s.role, s.shiftType||"", s.daytimeOR||"", s.alreadyDeployed?"yes":""].join("\t"));
+    });
+    document.getElementById("staff-paste").value = stLines.join("\n");
+    parseStaffNow();
+
   } catch (err) {
     alert("Could not load sample: " + err.message);
   }
 }
 
-/* =====================================================================
-   Import / Export
-===================================================================== */
 function exportJSON() {
   const blob = new Blob(
-    [JSON.stringify({ rooms: collectORs(), staff: collectStaff() }, null, 2)],
-    { type: "application/json" }
+    [JSON.stringify({rooms: collectORs(), staff: collectStaff()}, null, 2)],
+    {type: "application/json"}
   );
-  const a = Object.assign(document.createElement("a"), {
+  Object.assign(document.createElement("a"), {
     href: URL.createObjectURL(blob), download: "coverage-plan.json"
-  });
-  a.click();
+  }).click();
 }
 
 function importJSON(input) {
@@ -407,10 +745,44 @@ function importJSON(input) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
-      document.getElementById("or-tbody").innerHTML    = "";
-      document.getElementById("staff-tbody").innerHTML = "";
-      (data.rooms||[]).forEach(r => addORRow(r));
-      (data.staff||[]).forEach(s => addStaffRow(s));
+
+      // Rebuild schedule rooms map
+      scheduleRooms = {};
+      (data.rooms||[]).forEach(r => {
+        const id = r.id;
+        scheduleRooms[id] = {
+          attending: r.daytimeAttending || r.daytime_attending || null,
+          crna:      r.daytimeCRNA      || r.daytime_crna      || null,
+          resident:  r.daytimeResident  || r.daytime_resident  || null,
+        };
+      });
+      document.getElementById("schedule-status").innerHTML =
+        `<span class="status-pill status-ok">✓ ${Object.keys(scheduleRooms).length} rooms loaded from JSON</span>`;
+
+      // Populate late ORs (rooms where isLateRunning is true or assumed true)
+      const lateIds = (data.rooms||[])
+        .filter(r => r.isLateRunning !== false && r.is_late_running !== false)
+        .map(r => r.id)
+        .join(", ");
+      document.getElementById("late-ors-input").value = lateIds;
+      updateLatePreview();
+
+      // Populate staff
+      renderStaffTable(
+        (data.staff||[]).map(s => ({
+          name:           s.name,
+          role:           s.role,
+          residentLevel:  s.residentLevel || s.resident_level || null,
+          shiftType:      s.shiftType     || s.shift_type     || "1-A",
+          restrictions:   s.restrictions  || [],
+          affinities:     s.affinities    || [],
+          daytimeOR:      s.daytimeOR     || s.daytime_or     || null,
+          alreadyDeployed: s.alreadyDeployed || s.already_deployed || false,
+        }))
+      );
+      document.getElementById("staff-status").innerHTML =
+        `<span class="status-pill status-ok">✓ ${(data.staff||[]).length} staff loaded from JSON</span>`;
+
     } catch { alert("Invalid JSON file."); }
   };
   reader.readAsText(file);
@@ -420,12 +792,9 @@ function importJSON(input) {
 /* =====================================================================
    Results rendering
 ===================================================================== */
-const FLOOR_ORDER = {THOR:0,Gray:1,Jackson:2,L2:3,L3:4,L4:5};
-
 function renderResults(data) {
   const errors   = (data.warnings||[]).filter(w=>w.severity==="error");
   const warnings = (data.warnings||[]).filter(w=>w.severity==="warning");
-  const infos    = (data.warnings||[]).filter(w=>w.severity==="info");
   const totalAssigned = (data.assignments||[]).length;
   const totalRooms    = totalAssigned + (data.unassigned_rooms||[]).length;
 
@@ -439,204 +808,142 @@ function renderResults(data) {
     </div>
     ${renderWarnings(data)}`;
   section.classList.remove("d-none");
-  section.scrollIntoView({ behavior:"smooth" });
+  section.scrollIntoView({behavior:"smooth"});
 }
 
 function renderBanner(assigned, total, errCount, warnCount) {
-  const cls  = errCount  ? "err"  : warnCount ? "warn" : "ok";
-  const icon = errCount  ? "⚠️"   : warnCount ? "⚡"   : "✅";
-  const msg  = errCount  ? `${errCount} error(s) — coverage gaps remain`
+  const cls  = errCount ? "err"  : warnCount ? "warn" : "ok";
+  const icon = errCount ? "⚠️"   : warnCount ? "⚡"   : "✅";
+  const msg  = errCount ? `${errCount} error(s) — coverage gaps remain`
              : warnCount ? `Plan complete with ${warnCount} warning(s)`
              : "Plan complete — all rooms covered";
   return `<div class="summary-banner ${cls}">
     <span style="font-size:1.6rem">${icon}</span>
-    <div>
-      <strong>${msg}</strong><br>
-      <small style="opacity:.75">${assigned} of ${total} rooms assigned</small>
-    </div>
+    <div><strong>${msg}</strong><br>
+    <small style="opacity:.75">${assigned} of ${total} rooms assigned</small></div>
   </div>`;
 }
 
 function renderBoard(data) {
-  const rm = data.room_map || {};
-  const sm = data.staff_map || {};
-
-  const rows = [...(data.assignments||[])].sort((a,b) => {
+  const rm = data.room_map || {}, sm = data.staff_map || {};
+  const sorted = [...(data.assignments||[])].sort((a,b) => {
     const ra = rm[a.or_id]||{}, rb = rm[b.or_id]||{};
     if (ra.building !== rb.building) return (ra.building||"").localeCompare(rb.building||"");
-    const fo = (FLOOR_ORDER[ra.floor]||99) - (FLOOR_ORDER[rb.floor]||99);
-    return fo || (a.or_id - b.or_id);
+    return ((FLOOR_ORDER[ra.floor]||99) - (FLOOR_ORDER[rb.floor]||99)) || (a.or_id - b.or_id);
   });
-
   const unRows = (data.unassigned_rooms||[]).map(id => ({
-    or_id: id, attending: null, attending_role: null,
-    physical_provider: null, physical_provider_type: null, continuity: false
+    or_id:id, attending:null, attending_role:null,
+    physical_provider:null, physical_provider_type:null, continuity:false
   }));
 
-  const allRows = [...rows, ...unRows];
-
-  const bodyHTML = allRows.map(a => {
-    const room     = rm[String(a.or_id)] || {};
-    const building = room.building || "?";
-    const rowClass = !a.attending  ? "row-unassigned"
-                   : building === "Legacy" ? "row-legacy" : "row-lunder";
-
+  const bodyHTML = [...sorted, ...unRows].map(a => {
+    const room = rm[String(a.or_id)] || {};
+    const bldg = room.building || "?";
+    const rowClass = !a.attending ? "row-unassigned"
+                   : bldg === "Legacy" ? "row-legacy" : "row-lunder";
     const flags = [
       room.flagged_complex ? `<span class="badge-shift" style="background:#b45309">CPX</span>` : "",
       room.flagged_fluoro  ? `<span class="badge-shift" style="background:#7c3aed">FLU</span>` : "",
       room.is_new_start    ? `<span class="badge-shift" style="background:#0369a1">NEW</span>` : "",
     ].filter(Boolean).join(" ");
-
-    const roleCell = !a.attending   ? `<span style="color:#dc2626;font-weight:700">UNASSIGNED</span>`
-                   : a.attending_role === "solo" ? `<span class="role-solo">SOLO</span>`
+    const roleCell = !a.attending ? `<span style="color:#dc2626;font-weight:700">UNASSIGNED</span>`
+                   : a.attending_role==="solo" ? `<span class="role-solo">SOLO</span>`
                    : `<span class="role-supv">SUPV</span>`;
-
-    const shift   = a.attending ? ((sm[a.attending]||{}).shift_type || "") : "";
+    const shift   = a.attending ? ((sm[a.attending]||{}).shift_type||"") : "";
     const attCell = a.attending
-      ? `${esc(a.attending)} <span class="badge-shift">${esc(shift)}</span>`
-      : "—";
-
+      ? `${esc(a.attending)} <span class="badge-shift">${esc(shift)}</span>` : "—";
     const physCell = a.physical_provider
-      ? `${esc(a.physical_provider)}
-         <span class="${a.physical_provider_type==="CRNA"?"badge-crna":"badge-res"}">
-           ${a.physical_provider_type}
-         </span>`
-      : a.attending
-        ? `<em style="color:#6b7280">solo attending</em>`
-        : "";
-
-    const contCell = a.continuity ? `<span class="cont-mark">✓</span>` : "";
-
+      ? `${esc(a.physical_provider)} <span class="${a.physical_provider_type==="CRNA"?"badge-crna":"badge-res"}">${a.physical_provider_type}</span>`
+      : a.attending ? `<em style="color:#6b7280">solo attending</em>` : "";
     return `<tr class="${rowClass}">
       <td style="font-weight:700">${a.or_id}</td>
-      <td>${esc(building)}</td>
+      <td>${esc(bldg)}</td>
       <td>${esc(room.floor||"?")}</td>
-      <td>${esc(room.estimated_end||"?")}</td>
-      <td>${flags || "—"}</td>
+      <td>${esc(room.estimated_end||"—")}</td>
+      <td>${flags||"—"}</td>
       <td>${attCell}</td>
       <td>${roleCell}</td>
       <td>${physCell}</td>
-      <td style="text-align:center">${contCell}</td>
+      <td style="text-align:center">${a.continuity?`<span class="cont-mark">✓</span>`:""}</td>
     </tr>`;
   }).join("");
 
   return `<div class="section-card" style="margin-bottom:16px">
     <div class="card-hdr"><strong>Assignment Board</strong></div>
-    <div class="tbl-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="min-width:44px">OR</th>
-            <th style="min-width:68px">Bldg</th>
-            <th style="min-width:72px">Floor</th>
-            <th style="min-width:72px">Est. End</th>
-            <th style="min-width:80px">Flags</th>
-            <th style="min-width:180px">Attending</th>
-            <th style="min-width:60px">Role</th>
-            <th style="min-width:180px">Physical Provider</th>
-            <th style="min-width:46px">Cont.</th>
-          </tr>
-        </thead>
-        <tbody>${bodyHTML}</tbody>
-      </table>
-    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr>
+        <th style="min-width:44px">OR</th><th style="min-width:68px">Bldg</th>
+        <th style="min-width:72px">Floor</th><th style="min-width:60px">Est. End</th>
+        <th style="min-width:75px">Flags</th><th style="min-width:180px">Attending</th>
+        <th style="min-width:60px">Role</th><th style="min-width:180px">Physical Provider</th>
+        <th style="min-width:46px">Cont.</th>
+      </tr></thead>
+      <tbody>${bodyHTML}</tbody>
+    </table></div>
   </div>`;
 }
 
 function renderSupervisorGroups(data) {
-  const sm   = data.staff_map || {};
-  const rm   = data.room_map  || {};
-  const groups = data.supervisor_groups || {};
-  const roles  = {};
+  const sm = data.staff_map||{}, rm = data.room_map||{}, groups = data.supervisor_groups||{};
+  const roles = {};
   (data.assignments||[]).forEach(a => { if (a.attending) roles[a.attending] = a.attending_role; });
-
-  const rowsHTML = Object.entries(groups)
-    .sort(([a],[b]) => a.localeCompare(b))
-    .map(([name, orIds]) => {
-      const shift    = (sm[name]||{}).shift_type || "?";
-      const role     = roles[name] || "?";
-      const roomDescs = orIds.sort((a,b)=>a-b).map(id => {
-        const r = rm[String(id)] || {};
-        return `OR${id}<small style="color:#6b7280">(${r.floor||"?"})</small>`;
-      }).join(", ");
-      const roleCell = role==="solo"
-        ? `<span class="role-solo">solo</span>`
-        : `<span class="role-supv">supv</span>`;
-      return `<tr>
-        <td style="font-weight:600">${esc(name)}</td>
-        <td><span class="badge-shift">${esc(shift)}</span></td>
-        <td>${roleCell}</td>
-        <td>${roomDescs}</td>
-        <td style="text-align:center;font-weight:700">${orIds.length}</td>
-      </tr>`;
-    }).join("") || `<tr><td colspan="5" style="text-align:center;color:#9ca3af">No groups</td></tr>`;
-
+  const rowsHTML = Object.entries(groups).sort(([a],[b])=>a.localeCompare(b)).map(([name, ids]) => {
+    const shift = (sm[name]||{}).shift_type||"?";
+    const role  = roles[name]||"?";
+    const descs = ids.sort((a,b)=>a-b).map(id => {
+      const r = rm[String(id)]||{};
+      return `OR${id}<small style="color:#6b7280">(${r.floor||"?"})</small>`;
+    }).join(", ");
+    return `<tr>
+      <td style="font-weight:600">${esc(name)}</td>
+      <td><span class="badge-shift">${esc(shift)}</span></td>
+      <td>${role==="solo"?`<span class="role-solo">solo</span>`:`<span class="role-supv">supv</span>`}</td>
+      <td>${descs}</td>
+      <td style="text-align:center;font-weight:700">${ids.length}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" style="text-align:center;color:#9ca3af">No groups</td></tr>`;
   return `<div class="section-card" style="height:100%">
     <div class="card-hdr"><strong>Supervisor Groups</strong></div>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr>
-          <th>Attending</th><th>Shift</th><th>Role</th><th>Rooms</th><th>Load</th>
-        </tr></thead>
-        <tbody>${rowsHTML}</tbody>
-      </table>
-    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Attending</th><th>Shift</th><th>Role</th><th>Rooms</th><th>Load</th></tr></thead>
+      <tbody>${rowsHTML}</tbody>
+    </table></div>
   </div>`;
 }
 
 function renderRelief(data) {
-  const entries = data.relief_entries || [];
+  const entries = data.relief_entries||[];
   const bodyHTML = entries.length
-    ? entries.sort((a,b)=>a.or_id-b.or_id).map(e => `<tr>
-        <td style="font-weight:700">${e.or_id}</td>
-        <td>${esc(e.relieved_name)}</td>
-        <td><span class="badge-shift">${esc(e.relieved_role)}</span></td>
-      </tr>`).join("")
-    : `<tr><td colspan="3" style="text-align:center;color:#9ca3af;font-style:italic">
-         All daytime providers are on the after-5pm list
-       </td></tr>`;
-
+    ? entries.sort((a,b)=>a.or_id-b.or_id).map(e =>
+        `<tr><td style="font-weight:700">${e.or_id}</td>
+             <td>${esc(e.relieved_name)}</td>
+             <td><span class="badge-shift">${esc(e.relieved_role)}</span></td></tr>`).join("")
+    : `<tr><td colspan="3" style="text-align:center;color:#9ca3af;font-style:italic">All daytime providers are on the after-5pm list</td></tr>`;
   return `<div class="section-card" style="height:100%">
     <div class="card-hdr"><strong>Relief Summary <small style="font-weight:400;opacity:.8">(leaving at 5PM)</small></strong></div>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>OR</th><th>Outgoing Provider</th><th>Role</th></tr></thead>
-        <tbody>${bodyHTML}</tbody>
-      </table>
-    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>OR</th><th>Outgoing Provider</th><th>Role</th></tr></thead>
+      <tbody>${bodyHTML}</tbody>
+    </table></div>
   </div>`;
 }
 
 function renderWarnings(data) {
-  const all = data.warnings || [];
-  if (!all.length) {
-    return `<div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:6px;padding:10px 16px;margin-bottom:16px">
-      <strong>✓ No warnings or errors.</strong>
-    </div>`;
-  }
-
-  const cls = { error:"warn-error", warning:"warn-warning", info:"warn-info" };
-  const pfx = { error:"⛔", warning:"⚡", info:"ℹ️" };
-
-  // Group by severity
-  const order = ["error","warning","info"];
-  const items = order.flatMap(sev =>
+  const all = data.warnings||[];
+  if (!all.length) return `<div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:6px;padding:10px 16px;margin-bottom:16px"><strong>✓ No warnings or errors.</strong></div>`;
+  const cls = {error:"warn-error",warning:"warn-warning",info:"warn-info"};
+  const pfx = {error:"⛔",warning:"⚡",info:"ℹ️"};
+  const items = ["error","warning","info"].flatMap(sev =>
     all.filter(w=>w.severity===sev).map(w => {
-      const orPart = w.or_id != null ? `<strong>OR ${w.or_id}:</strong> ` : "";
+      const orPart = w.or_id!=null ? `<strong>OR ${w.or_id}:</strong> ` : "";
       return `<div class="warn-item ${cls[sev]}">${pfx[sev]} ${orPart}${esc(w.message)}</div>`;
     })
   ).join("");
-
   return `<div class="section-card" style="margin-bottom:16px">
     <div class="card-hdr"><strong>Warnings &amp; Errors</strong></div>
     <div style="padding:12px 16px">${items}</div>
   </div>`;
 }
-
-/* =====================================================================
-   Init — start with empty tables
-===================================================================== */
-// (tables start empty; coordinator fills in or clicks Load Sample)
 </script>
 </body>
 </html>
