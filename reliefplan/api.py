@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .algorithm import plan as run_plan
 from .loader import _parse_room, _parse_staff
+from .parser import parse_or_schedule, parse_staff_list
 
 app = FastAPI(title="MGH Anesthesia Coverage Planner", docs_url=None, redoc_url=None)
 
@@ -41,6 +42,34 @@ async def api_plan(request: Request) -> dict[str, Any]:
         "room_map": {str(r.id): dataclasses.asdict(r) for r in rooms},
         "staff_map": {s.name: dataclasses.asdict(s) for s in staff},
     }
+
+
+@app.post("/api/parse/schedule")
+async def api_parse_schedule(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    text = body.get("text", "")
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="text is required")
+    try:
+        return await parse_or_schedule(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Parse error: {exc}")
+
+
+@app.post("/api/parse/staff")
+async def api_parse_staff(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    text = body.get("text", "")
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="text is required")
+    try:
+        return await parse_staff_list(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Parse error: {exc}")
 
 
 @app.get("/api/sample")

@@ -162,7 +162,7 @@
     <div class="step-body">
       <textarea id="schedule-paste" class="paste-area" rows="7"
         placeholder="Paste your OR schedule here (copy from spreadsheet or scheduling system).&#10;&#10;Expected columns (any order, any header name):  OR / Room   Attending   CRNA   Resident&#10;&#10;Example:&#10;OR&#9;Attending&#9;CRNA&#9;Resident&#10;4&#9;Patel&#9;Jones&#10;5&#9;Smith&#9;&#9;Kim&#10;44&#9;Rivera&#9;Santos&#10;63&#9;Chen&#9;&#9;Lee"></textarea>
-      <button class="parse-btn" onclick="parseScheduleNow()">Parse Schedule</button>
+      <button class="parse-btn" id="parse-schedule-btn" onclick="parseScheduleNow()">Parse Schedule</button>
       <p class="hint">Tip: Tab-separated (copy/paste from Excel) works best. Column headers are auto-detected.</p>
     </div>
   </div>
@@ -192,7 +192,7 @@
     <div class="step-body">
       <textarea id="staff-paste" class="paste-area" rows="6"
         placeholder="Paste your after-5pm staff list here (copy from spreadsheet or call schedule).&#10;&#10;Expected columns:  Name   Role   Shift   Daytime OR (optional)   Deployed (optional)&#10;&#10;Example:&#10;Name&#9;Role&#9;Shift&#9;Daytime OR&#9;Deployed&#10;Johnson&#9;attending&#9;1-A&#10;Williams&#9;attending&#9;3p-10p&#9;63&#9;yes&#10;Jones&#9;CRNA&#9;CRNA-7a-8p&#9;44&#9;yes&#10;Kim&#9;resident&#9;3p-10p&#9;5"></textarea>
-      <button class="parse-btn" onclick="parseStaffNow()">Parse Staff</button>
+      <button class="parse-btn" id="parse-staff-btn" onclick="parseStaffNow()">Parse Staff</button>
       <p class="hint">Shift keywords recognised: 1-A, 2-A, 3p-10p, 7a-7p, CRNA-7a-8p, CRNA-5p-8p, R2/R3/R4. "Deployed" = already placed in a room before 5pm.</p>
       <div id="staff-preview" class="d-none">
         <div class="staff-tbl-wrap">
@@ -462,19 +462,66 @@ function parseStaffText(raw) {
 /* =====================================================================
    UI — schedule
 ===================================================================== */
-function parseScheduleNow() {
-  const raw = document.getElementById("schedule-paste").value;
-  const {rooms, warnings, count} = parseScheduleText(raw);
-  scheduleRooms = rooms;
+async function parseScheduleNow() {
+  const raw = document.getElementById("schedule-paste").value.trim();
+  if (!raw) return;
 
+  const btn = document.getElementById("parse-schedule-btn");
+  const statusEl = document.getElementById("schedule-status");
+  btn.disabled = true;
+  btn.textContent = "Parsing…";
+  statusEl.innerHTML = `<span class="status-pill status-warn">✨ Parsing with AI…</span>`;
+
+  let rooms = null, warnings = [], count = 0, usedAI = false;
+
+  try {
+    const resp = await fetch("/api/parse/schedule", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: raw}),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      rooms = data.rooms;   // {str_id: {attending, crna, resident}}
+      warnings = data.warnings || [];
+      count = data.count || Object.keys(rooms).length;
+      usedAI = true;
+    } else if (resp.status === 503) {
+      // No API key — fall back silently
+    } else {
+      console.warn("Schedule parse API error", resp.status);
+    }
+  } catch (e) {
+    console.warn("Schedule parse network error", e);
+  }
+
+  if (!rooms) {
+    // Fallback to local parser
+    const result = parseScheduleText(raw);
+    rooms = result.rooms;
+    warnings = result.warnings;
+    count = result.count;
+  }
+
+  // Normalise: LLM returns {"1": {attending,crna,resident}}, local parser same shape but keyed differently
+  const normalised = {};
+  for (const [k, v] of Object.entries(rooms)) {
+    const id = parseInt(k, 10);
+    if (!isNaN(id)) normalised[id] = v;
+  }
+  scheduleRooms = normalised;
+
+  const label = usedAI ? "✨ AI-parsed" : "local parser";
   const badge = warnings.length
-    ? `<span class="status-pill status-warn">⚡ ${count} rooms — ${warnings.length} warning(s)</span>`
+    ? `<span class="status-pill status-warn">⚡ ${count} rooms — ${warnings.length} warning(s) (${label})</span>`
     : count > 0
-      ? `<span class="status-pill status-ok">✓ ${count} rooms parsed</span>`
+      ? `<span class="status-pill status-ok">✓ ${count} rooms parsed (${label})</span>`
       : `<span class="status-pill status-err">✗ No rooms found</span>`;
-  document.getElementById("schedule-status").innerHTML = badge;
+  statusEl.innerHTML = badge;
 
-  updateLatePreview(); // refresh OR cards with new data
+  btn.disabled = false;
+  btn.textContent = "Parse Schedule";
+  updateLatePreview();
 }
 
 /* =====================================================================
@@ -546,17 +593,54 @@ function renderORCard(id) {
 /* =====================================================================
    UI — staff table
 ===================================================================== */
-function parseStaffNow() {
-  const raw = document.getElementById("staff-paste").value;
-  const {staff, warnings} = parseStaffText(raw);
+async function parseStaffNow() {
+  const raw = document.getElementById("staff-paste").value.trim();
+  if (!raw) return;
 
+  const btn = document.getElementById("parse-staff-btn");
+  const statusEl = document.getElementById("staff-status");
+  btn.disabled = true;
+  btn.textContent = "Parsing…";
+  statusEl.innerHTML = `<span class="status-pill status-warn">✨ Parsing with AI…</span>`;
+
+  let staff = null, warnings = [], usedAI = false;
+
+  try {
+    const resp = await fetch("/api/parse/staff", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: raw}),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      staff = data.staff || [];
+      warnings = data.warnings || [];
+      usedAI = true;
+    } else if (resp.status === 503) {
+      // No API key — fall back silently
+    } else {
+      console.warn("Staff parse API error", resp.status);
+    }
+  } catch (e) {
+    console.warn("Staff parse network error", e);
+  }
+
+  if (!staff) {
+    const result = parseStaffText(raw);
+    staff = result.staff;
+    warnings = result.warnings;
+  }
+
+  const label = usedAI ? "✨ AI-parsed" : "local parser";
   const badge = warnings.length
-    ? `<span class="status-pill status-warn">⚡ ${staff.length} staff — ${warnings.length} line(s) skipped</span>`
+    ? `<span class="status-pill status-warn">⚡ ${staff.length} staff — ${warnings.length} line(s) skipped (${label})</span>`
     : staff.length > 0
-      ? `<span class="status-pill status-ok">✓ ${staff.length} staff parsed</span>`
+      ? `<span class="status-pill status-ok">✓ ${staff.length} staff parsed (${label})</span>`
       : `<span class="status-pill status-err">✗ No staff found</span>`;
-  document.getElementById("staff-status").innerHTML = badge;
+  statusEl.innerHTML = badge;
 
+  btn.disabled = false;
+  btn.textContent = "Parse Staff";
   renderStaffTable(staff);
 }
 
@@ -708,7 +792,7 @@ async function loadSample() {
       schLines.push([r.id, r.daytimeAttending||"", r.daytimeCRNA||"", r.daytimeResident||""].join("\t"));
     });
     document.getElementById("schedule-paste").value = schLines.join("\n");
-    parseScheduleNow();
+    await parseScheduleNow();
 
     // Set late ORs
     const lateIds = (data.rooms||[]).filter(r=>r.isLateRunning!==false).map(r=>r.id).join(", ");
@@ -721,7 +805,7 @@ async function loadSample() {
       stLines.push([s.name, s.role, s.shiftType||"", s.daytimeOR||"", s.alreadyDeployed?"yes":""].join("\t"));
     });
     document.getElementById("staff-paste").value = stLines.join("\n");
-    parseStaffNow();
+    await parseStaffNow();
 
   } catch (err) {
     alert("Could not load sample: " + err.message);
