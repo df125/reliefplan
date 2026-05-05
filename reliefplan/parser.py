@@ -14,7 +14,7 @@ from typing import Any
 from google import genai
 from google.genai import types as gtypes
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-2.5-flash"
 
 # ── Tool schemas (OpenAPI format — converted to Gemini at call time) ───────────
 
