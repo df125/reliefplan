@@ -1,16 +1,22 @@
 """
 LLM-based text parsing for OR schedule and after-5pm staff lists.
 
-Uses Claude with tool use to reliably extract structured data from
-free-form pasted text regardless of format or column order.
+Uses Google Gemini with function calling to reliably extract structured data
+from free-form pasted text regardless of format or column order.
 Falls back gracefully if the API key is absent.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
-import anthropic
+from google import genai
+from google.genai import types as gtypes
+
+_MODEL = "gemini-2.0-flash"
+
+# ── Tool schemas (OpenAPI format — converted to Gemini at call time) ───────────
 
 _SCHEDULE_TOOL: dict[str, Any] = {
     "name": "extract_schedule",
@@ -33,16 +39,16 @@ _SCHEDULE_TOOL: dict[str, Any] = {
                             "description": "OR number (1–99). Strip any 'OR' prefix.",
                         },
                         "daytimeAttending": {
-                            "type": ["string", "null"],
-                            "description": "Attending anesthesiologist name. Null if not listed.",
+                            "type": "string",
+                            "description": "Attending anesthesiologist name. Empty string if not listed.",
                         },
                         "daytimeCRNA": {
-                            "type": ["string", "null"],
-                            "description": "CRNA or AA name. Null if not listed.",
+                            "type": "string",
+                            "description": "CRNA or AA name. Empty string if not listed.",
                         },
                         "daytimeResident": {
-                            "type": ["string", "null"],
-                            "description": "Resident or fellow name. Null if not listed.",
+                            "type": "string",
+                            "description": "Resident or fellow name. Empty string if not listed.",
                         },
                     },
                     "required": ["id"],
@@ -56,9 +62,7 @@ _SCHEDULE_TOOL: dict[str, Any] = {
 _STAFF_TOOL: dict[str, Any] = {
     "name": "extract_staff",
     "description": (
-        "Extract after-5pm anesthesia staff from a pasted call schedule or staff list. "
-        "The text may be tab-separated, have section headers like 'Attendings:' or 'CRNAs:', "
-        "or be typed as a simple list."
+        "Extract after-5pm anesthesia staff from a pasted call schedule or staff list."
     ),
     "input_schema": {
         "type": "object",
@@ -89,19 +93,19 @@ _STAFF_TOOL: dict[str, Any] = {
                             ),
                         },
                         "residentLevel": {
-                            "type": ["string", "null"],
-                            "enum": ["R2", "R3", "R4", None],
-                            "description": "Only for residents. CA-1=R2, CA-2=R3, CA-3=R4.",
+                            "type": "string",
+                            "enum": ["R2", "R3", "R4", ""],
+                            "description": "Only for residents. CA-1=R2, CA-2=R3, CA-3=R4. Empty string otherwise.",
                         },
                         "daytimeOR": {
-                            "type": ["integer", "null"],
-                            "description": "OR number they covered during the day, if mentioned.",
+                            "type": "integer",
+                            "description": "OR number covered during the day, or 0 if not mentioned.",
                         },
                         "alreadyDeployed": {
                             "type": "boolean",
                             "description": (
                                 "True if already placed in a room before 5pm "
-                                "(indicated by 'in room', 'deployed', 'OR ##', parenthetical OR, etc.)."
+                                "(indicated by 'in room', 'deployed', 'OR ##', etc.)."
                             ),
                         },
                         "restrictions": {
@@ -117,6 +121,79 @@ _STAFF_TOOL: dict[str, Any] = {
         "required": ["staff"],
     },
 }
+
+_REFINE_TOOL: dict[str, Any] = {
+    "name": "refine_plan",
+    "description": (
+        "Interpret natural language feedback and produce a list of specific edit operations "
+        "to apply to the current anesthesia coverage plan. For each change the user requests, "
+        "produce one edit operation. If a change violates a hard rule, mark it rejected."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "edits": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": [
+                                "set_attending",
+                                "set_physical",
+                                "remove_attending",
+                                "remove_physical",
+                                "swap_attendings",
+                            ],
+                            "description": (
+                                "set_attending: assign a named attending to an OR. "
+                                "set_physical: assign a named CRNA or resident as physical provider. "
+                                "remove_attending: remove the attending (leaves OR unassigned). "
+                                "remove_physical: remove physical provider (attending covers solo). "
+                                "swap_attendings: swap attending assignments between two ORs."
+                            ),
+                        },
+                        "or_id": {
+                            "type": "integer",
+                            "description": "Primary OR number.",
+                        },
+                        "or_id_2": {
+                            "type": "integer",
+                            "description": "Second OR number — only for swap_attendings. Use 0 if not applicable.",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": (
+                                "Exact name from the staff list for set_attending / set_physical. "
+                                "Empty string for remove_* and swap_attendings."
+                            ),
+                        },
+                        "rejected": {
+                            "type": "boolean",
+                            "description": "True when this change violates a hard rule.",
+                        },
+                        "rejection_reason": {
+                            "type": "string",
+                            "description": "Why the change was rejected. Empty string if not rejected.",
+                        },
+                    },
+                    "required": ["operation", "or_id", "rejected"],
+                },
+            },
+            "summary": {
+                "type": "string",
+                "description": (
+                    "Conversational response: confirm what was understood, "
+                    "list what will be changed, and explain anything that cannot be done."
+                ),
+            },
+        },
+        "required": ["edits", "summary"],
+    },
+}
+
+# ── System prompts ─────────────────────────────────────────────────────────────
 
 _SYSTEM_SCHEDULE = """\
 You are a data-extraction assistant for the MGH (Massachusetts General Hospital) \
@@ -134,12 +211,11 @@ followed by more OR numbers.
     "Resident" → resident for each OR (may be blank)
 - "Team Lead:" and "Resource:" lines mark the end of a section — ignore them.
 - An empty cell means no one is assigned in that role for that OR.
-- "Tutor, Tutee" is a teaching-pair PLACEHOLDER, NOT a real person — treat as null.
+- "Tutor, Tutee" is a teaching-pair PLACEHOLDER, NOT a real person — treat as empty string.
 - Names appear as "Last, First M" or "Last, First Middle" — keep exactly as shown.
 - OR numbers range 1–99; ignore any text that is not a 1–2 digit integer in the OR-number row.
 
-Return one entry per OR number found, with daytimeAttending/daytimeCRNA/daytimeResident \
-set to null when the cell is empty or contains "Tutor, Tutee"."""
+Return one entry per OR number found."""
 
 _SYSTEM_STAFF = """\
 You are a data-extraction assistant for the MGH Anesthesia Department. \
@@ -166,80 +242,167 @@ Also accept common variations: \
 "CRNA.*5p" → CRNA-5p-8p; "CRNA.*7a" → CRNA-7a-8p; \
 "CA-1"/"CA1" → R2; "CA-2"/"CA2" → R3; "CA-3"/"CA3" → R4.
 
-Names are typically last name only or "LastFirst" run together — keep exactly as shown. \
+Names are typically last name only — keep exactly as shown. \
 alreadyDeployed = false unless the name is followed by an OR number, "in room", or "deployed". \
-daytimeOR = null unless an OR number is mentioned alongside the name."""
+daytimeOR = 0 unless an OR number is mentioned alongside the name."""
 
-_REFINE_TOOL: dict[str, Any] = {
-    "name": "refine_plan",
-    "description": (
-        "Interpret natural language feedback and produce a list of specific edit operations "
-        "to apply to the current anesthesia coverage plan. For each change the user requests, "
-        "produce one edit operation. If a change violates a hard rule, mark it rejected and explain why."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "edits": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "operation": {
-                            "type": "string",
-                            "enum": [
-                                "set_attending",
-                                "set_physical",
-                                "remove_attending",
-                                "remove_physical",
-                                "swap_attendings",
-                            ],
-                            "description": (
-                                "set_attending: assign a named attending to an OR (replaces current). "
-                                "set_physical: assign a named CRNA or resident as physical provider. "
-                                "remove_attending: remove the attending from an OR (leaves it unassigned). "
-                                "remove_physical: remove physical provider (attending covers solo). "
-                                "swap_attendings: swap the attending assignments between two ORs."
-                            ),
-                        },
-                        "or_id": {
-                            "type": "integer",
-                            "description": "Primary OR number.",
-                        },
-                        "or_id_2": {
-                            "type": ["integer", "null"],
-                            "description": "Second OR number — only for swap_attendings.",
-                        },
-                        "name": {
-                            "type": ["string", "null"],
-                            "description": (
-                                "Exact name from the staff list for set_attending / set_physical. "
-                                "Use null for remove_* and swap_attendings."
-                            ),
-                        },
-                        "rejected": {
-                            "type": "boolean",
-                            "description": "True when this change violates a hard rule and must not be applied.",
-                        },
-                        "rejection_reason": {
-                            "type": ["string", "null"],
-                            "description": "Human-readable explanation of why the change was rejected.",
-                        },
-                    },
-                    "required": ["operation", "or_id", "rejected"],
-                },
-            },
-            "summary": {
-                "type": "string",
-                "description": (
-                    "Conversational response to the user: confirm what was understood, "
-                    "list what will be changed, and explain anything that cannot be done."
-                ),
-            },
-        },
-        "required": ["edits", "summary"],
-    },
-}
+
+# ── Gemini helpers ─────────────────────────────────────────────────────────────
+
+def _client() -> genai.Client:
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise ValueError("GEMINI_API_KEY environment variable is not set")
+    return genai.Client(api_key=key)
+
+
+def _to_schema(s: dict[str, Any]) -> gtypes.Schema:
+    """Recursively convert an OpenAPI-style schema dict to a Gemini Schema."""
+    type_map = {
+        "object":  "OBJECT",
+        "array":   "ARRAY",
+        "string":  "STRING",
+        "integer": "INTEGER",
+        "boolean": "BOOLEAN",
+        "number":  "NUMBER",
+    }
+    raw_type = s.get("type", "string")
+    if isinstance(raw_type, list):
+        raw_type = next((t for t in raw_type if t != "null"), "string")
+
+    kwargs: dict[str, Any] = {"type": type_map.get(raw_type, "STRING")}
+
+    if "description" in s:
+        kwargs["description"] = s["description"]
+    if raw_type == "object" and "properties" in s:
+        kwargs["properties"] = {k: _to_schema(v) for k, v in s["properties"].items()}
+    if raw_type == "object" and "required" in s:
+        kwargs["required"] = s["required"]
+    if raw_type == "array" and "items" in s:
+        kwargs["items"] = _to_schema(s["items"])
+    if "enum" in s:
+        vals = [str(e) for e in s["enum"] if e is not None and e != ""]
+        if vals:
+            kwargs["enum"] = vals
+
+    return gtypes.Schema(**kwargs)
+
+
+def _make_tool(tool_def: dict[str, Any]) -> gtypes.Tool:
+    """Convert an Anthropic-format tool dict to a Gemini Tool."""
+    return gtypes.Tool(function_declarations=[
+        gtypes.FunctionDeclaration(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            parameters=_to_schema(tool_def["input_schema"]),
+        )
+    ])
+
+
+def _forced_config(system: str, tool_name: str, tool_def: dict[str, Any]) -> gtypes.GenerateContentConfig:
+    return gtypes.GenerateContentConfig(
+        system_instruction=system,
+        tools=[_make_tool(tool_def)],
+        tool_config=gtypes.ToolConfig(
+            function_calling_config=gtypes.FunctionCallingConfig(
+                mode="ANY",
+                allowed_function_names=[tool_name],
+            )
+        ),
+    )
+
+
+def _extract_fc_args(response: Any, tool_name: str) -> dict[str, Any] | None:
+    """Pull function-call args out of a Gemini response as a plain Python dict."""
+    for candidate in (response.candidates or []):
+        for part in (candidate.content.parts or []):
+            fc = getattr(part, "function_call", None)
+            if fc and getattr(fc, "name", None) == tool_name:
+                args = fc.args or {}
+                # Round-trip through JSON to guarantee plain Python types
+                try:
+                    return json.loads(json.dumps(dict(args)))
+                except (TypeError, ValueError):
+                    return dict(args)
+    return None
+
+
+# ── Public async functions ─────────────────────────────────────────────────────
+
+async def parse_or_schedule(text: str) -> dict[str, Any]:
+    """
+    Parse a pasted OR schedule with Gemini.
+    Returns {"rooms": {str(id): {attending, crna, resident}}, "count": int, "warnings": []}.
+    Raises ValueError if no API key; RuntimeError on unexpected response.
+    """
+    client = _client()
+    response = await client.aio.models.generate_content(
+        model=_MODEL,
+        contents=f"Extract the OR room assignments from this schedule:\n\n{text}",
+        config=_forced_config(_SYSTEM_SCHEDULE, "extract_schedule", _SCHEDULE_TOOL),
+    )
+
+    args = _extract_fc_args(response, "extract_schedule")
+    if args is None:
+        raise RuntimeError("LLM did not return the expected function call")
+
+    rooms: dict[str, Any] = {}
+    for room in args.get("rooms", []):
+        or_id = room.get("id")
+        try:
+            or_id = int(or_id)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= or_id <= 99:
+            rooms[str(or_id)] = {
+                "attending": room.get("daytimeAttending") or None,
+                "crna":      room.get("daytimeCRNA")      or None,
+                "resident":  room.get("daytimeResident")  or None,
+            }
+    return {"rooms": rooms, "count": len(rooms), "warnings": []}
+
+
+async def parse_staff_list(text: str) -> dict[str, Any]:
+    """
+    Parse a pasted after-5pm staff list with Gemini.
+    Returns {"staff": [...], "warnings": []}.
+    Raises ValueError if no API key; RuntimeError on unexpected response.
+    """
+    client = _client()
+    response = await client.aio.models.generate_content(
+        model=_MODEL,
+        contents=f"Extract the after-5pm staff from this list:\n\n{text}",
+        config=_forced_config(_SYSTEM_STAFF, "extract_staff", _STAFF_TOOL),
+    )
+
+    args = _extract_fc_args(response, "extract_staff")
+    if args is None:
+        raise RuntimeError("LLM did not return the expected function call")
+
+    staff = []
+    for s in args.get("staff", []):
+        if not s.get("name"):
+            continue
+        daytime_or = s.get("daytimeOR") or 0
+        try:
+            daytime_or = int(daytime_or) or None
+        except (TypeError, ValueError):
+            daytime_or = None
+        res_level = s.get("residentLevel") or None
+        if res_level == "":
+            res_level = None
+        staff.append({
+            "name":             s["name"],
+            "role":             s.get("role", "attending"),
+            "shiftType":        s.get("shiftType", "1-A"),
+            "residentLevel":    res_level,
+            "availablePast5pm": True,
+            "restrictions":     s.get("restrictions") or [],
+            "affinities":       [],
+            "daytimeOR":        daytime_or,
+            "alreadyDeployed":  bool(s.get("alreadyDeployed", False)),
+        })
+    return {"staff": staff, "warnings": []}
 
 
 async def parse_refinement(
@@ -251,23 +414,22 @@ async def parse_refinement(
     """
     Interpret natural-language feedback and return structured edit operations.
     Returns {"edits": [...], "summary": str}.
-    Raises ValueError if no API key; RuntimeError on unexpected LLM response.
+    Raises ValueError if no API key; RuntimeError on unexpected response.
     """
-    # Summarise current assignments as readable text for the LLM context
     plan_lines = ["Current assignments:"]
     for a in sorted(plan.get("assignments", []), key=lambda x: x["or_id"]):
         phys = a.get("physical_provider")
         phys_type = a.get("physical_provider_type", "")
-        phys_str = f"  physical={phys} ({phys_type})" if phys else "  solo attending"
+        phys_str = f"physical={phys} ({phys_type})" if phys else "solo attending"
         plan_lines.append(
-            f"  OR {a['or_id']}: attending={a['attending']} ({a.get('attending_role','')}) {phys_str}"
+            f"  OR {a['or_id']}: attending={a['attending']} ({a.get('attending_role','')}) | {phys_str}"
         )
     for or_id in sorted(plan.get("unassigned_rooms", [])):
         plan_lines.append(f"  OR {or_id}: UNASSIGNED")
 
     staff_lines = ["Available staff (use exact names):"]
     for s in staff:
-        restr = f"  [restrictions: {', '.join(s.get('restrictions', []))}]" if s.get("restrictions") else ""
+        restr = f" [restrictions: {', '.join(s.get('restrictions', []))}]" if s.get("restrictions") else ""
         staff_lines.append(
             f"  {s['name']} | role={s['role']} | shift={s.get('shiftType','')}{restr}"
         )
@@ -286,7 +448,7 @@ async def parse_refinement(
         "The user wants to adjust the current after-5pm assignment plan.",
         "Interpret their feedback and produce structured edit operations.",
         "",
-        "Hard rules (enforce these — mark violating edits as rejected):",
+        "Hard rules (enforce — mark violating edits as rejected=true):",
         "  • An attending cannot supervise rooms in both Legacy AND Lunder buildings.",
         "  • Staff with 'no-fluoro' restriction cannot go into a fluoro-flagged OR.",
         "  • R2 residents may only go in complex-flagged ORs.",
@@ -301,103 +463,24 @@ async def parse_refinement(
     ])
 
     client = _client()
-    response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        system=system,
-        messages=[{
-            "role": "user",
-            "content": f"Please make the following changes to the plan:\n\n{feedback}",
-        }],
-        tools=[_REFINE_TOOL],
-        tool_choice={"type": "tool", "name": "refine_plan"},
+    response = await client.aio.models.generate_content(
+        model=_MODEL,
+        contents=f"Please make the following changes to the plan:\n\n{feedback}",
+        config=_forced_config(system, "refine_plan", _REFINE_TOOL),
     )
 
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "refine_plan":
-            return {
-                "edits":   block.input.get("edits", []),
-                "summary": block.input.get("summary", ""),
-            }
+    args = _extract_fc_args(response, "refine_plan")
+    if args is None:
+        raise RuntimeError("LLM did not return the expected function call")
 
-    raise RuntimeError("LLM did not return the expected tool call")
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
-    return anthropic.AsyncAnthropic(api_key=key)
+    # Normalise edits: or_id_2=0 means absent, name="" means absent
+    edits = []
+    for e in args.get("edits", []):
+        edits.append({
+            **e,
+            "or_id_2":          e.get("or_id_2") or None,
+            "name":             e.get("name") or None,
+            "rejection_reason": e.get("rejection_reason") or None,
+        })
 
-
-async def parse_or_schedule(text: str) -> dict[str, Any]:
-    """
-    Parse a pasted OR schedule with Claude.
-    Returns {"rooms": {str(id): {attending, crna, resident}}, "count": int, "warnings": []}.
-    Raises ValueError if no API key; raises RuntimeError on unexpected LLM response.
-    """
-    client = _client()
-    response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        system=_SYSTEM_SCHEDULE,
-        messages=[{
-            "role": "user",
-            "content": f"Extract the OR room assignments from this schedule:\n\n{text}",
-        }],
-        tools=[_SCHEDULE_TOOL],
-        tool_choice={"type": "tool", "name": "extract_schedule"},
-    )
-
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "extract_schedule":
-            rooms: dict[str, Any] = {}
-            for room in block.input.get("rooms", []):
-                or_id = room.get("id")
-                if or_id and isinstance(or_id, int) and 1 <= or_id <= 99:
-                    rooms[str(or_id)] = {
-                        "attending": room.get("daytimeAttending") or None,
-                        "crna":      room.get("daytimeCRNA")      or None,
-                        "resident":  room.get("daytimeResident")  or None,
-                    }
-            return {"rooms": rooms, "count": len(rooms), "warnings": []}
-
-    raise RuntimeError("LLM did not return the expected tool call")
-
-
-async def parse_staff_list(text: str) -> dict[str, Any]:
-    """
-    Parse a pasted after-5pm staff list with Claude.
-    Returns {"staff": [...], "warnings": []}.
-    Raises ValueError if no API key; raises RuntimeError on unexpected LLM response.
-    """
-    client = _client()
-    response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        system=_SYSTEM_STAFF,
-        messages=[{
-            "role": "user",
-            "content": f"Extract the after-5pm staff from this list:\n\n{text}",
-        }],
-        tools=[_STAFF_TOOL],
-        tool_choice={"type": "tool", "name": "extract_staff"},
-    )
-
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "extract_staff":
-            staff = []
-            for s in block.input.get("staff", []):
-                if not s.get("name"):
-                    continue
-                staff.append({
-                    "name":            s["name"],
-                    "role":            s.get("role", "attending"),
-                    "shiftType":       s.get("shiftType", "1-A"),
-                    "residentLevel":   s.get("residentLevel"),
-                    "availablePast5pm": True,
-                    "restrictions":    s.get("restrictions") or [],
-                    "affinities":      [],
-                    "daytimeOR":       s.get("daytimeOR"),
-                    "alreadyDeployed": bool(s.get("alreadyDeployed", False)),
-                })
-            return {"staff": staff, "warnings": []}
-
-    raise RuntimeError("LLM did not return the expected tool call")
+    return {"edits": edits, "summary": args.get("summary", "")}
