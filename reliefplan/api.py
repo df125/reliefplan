@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .algorithm import plan as run_plan
 from .loader import _parse_room, _parse_staff
-from .parser import parse_or_schedule, parse_staff_list
+from .parser import parse_or_schedule, parse_staff_list, parse_refinement
+from .refine import apply_edits
 
 app = FastAPI(title="MGH Anesthesia Coverage Planner", docs_url=None, redoc_url=None)
 
@@ -41,6 +42,44 @@ async def api_plan(request: Request) -> dict[str, Any]:
         # Lookup maps for the frontend (keyed by string for JSON compatibility)
         "room_map": {str(r.id): dataclasses.asdict(r) for r in rooms},
         "staff_map": {s.name: dataclasses.asdict(s) for s in staff},
+    }
+
+
+@app.post("/api/refine")
+async def api_refine(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    feedback = (body.get("feedback") or "").strip()
+    if not feedback:
+        raise HTTPException(status_code=422, detail="feedback is required")
+
+    rooms_raw = body.get("rooms", [])
+    staff_raw = body.get("staff", [])
+    current_plan = body.get("plan", {})
+
+    try:
+        rooms = [_parse_room(r, i) for i, r in enumerate(rooms_raw)]
+        staff = [_parse_staff(s, i) for i, s in enumerate(staff_raw)]
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    try:
+        refine_result = await parse_refinement(feedback, current_plan, rooms_raw, staff_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Refinement error: {exc}")
+
+    updated_plan, applied, rejected = apply_edits(
+        current_plan, refine_result["edits"], rooms, staff
+    )
+
+    return {
+        **updated_plan,
+        "room_map":        {str(r.id): dataclasses.asdict(r) for r in rooms},
+        "staff_map":       {s.name: dataclasses.asdict(s) for s in staff},
+        "refine_summary":  refine_result["summary"],
+        "changes_applied": applied,
+        "changes_rejected": rejected,
     }
 
 

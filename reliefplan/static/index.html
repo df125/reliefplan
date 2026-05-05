@@ -132,6 +132,16 @@
 
     .hint { font-size:.75rem; color:#9ca3af; margin-top:5px; }
     .d-none { display:none!important; }
+
+    /* ── Refine section ──────────────────────────────────── */
+    .refine-summary { background:#eff6ff; border-left:4px solid #2563eb; border-radius:6px;
+                      padding:10px 14px; margin-bottom:10px; font-size:.88rem; line-height:1.5; }
+    .change-list { margin:6px 0 0; padding-left:0; list-style:none; font-size:.84rem; }
+    .change-list li { padding:4px 10px; border-radius:4px; margin-bottom:3px; }
+    .change-list.applied  li { background:#dcfce7; color:#14532d; }
+    .change-list.applied  li::before { content:"✓ "; font-weight:700; }
+    .change-list.rejected li { background:#fee2e2; color:#7f1d1d; }
+    .change-list.rejected li::before { content:"✗ "; font-weight:700; }
   </style>
 </head>
 <body>
@@ -227,6 +237,21 @@
 
   <!-- ── Results ───────────────────────────────────────────── -->
   <div id="results-section" class="d-none"></div>
+
+  <!-- ── Refine ─────────────────────────────────────────────── -->
+  <div id="refine-section" class="step-card d-none">
+    <div class="step-hdr">
+      <span class="step-num">5</span>
+      <strong>Refine Plan</strong>
+      <span id="refine-status" style="margin-left:10px"></span>
+    </div>
+    <div class="step-body">
+      <textarea id="refine-text" class="paste-area" rows="3"
+        placeholder="Describe any changes you'd like to make. For example:&#10;  • Move Jones to OR 63 instead of OR 44&#10;  • Dr. Smith should cover OR 82, not Dr. Johnson&#10;  • Swap the attendings in OR 15 and OR 44&#10;  • Remove the CRNA from OR 71 — attending will cover solo"></textarea>
+      <button class="parse-btn" id="refine-btn" onclick="refinePlan()">Apply Changes</button>
+      <div id="refine-result"></div>
+    </div>
+  </div>
 
 </div><!-- /container -->
 
@@ -931,7 +956,11 @@ function importJSON(input) {
 /* =====================================================================
    Results rendering
 ===================================================================== */
+let currentPlanData = null;
+
 function renderResults(data) {
+  currentPlanData = data;
+
   const errors   = (data.warnings||[]).filter(w=>w.severity==="error");
   const warnings = (data.warnings||[]).filter(w=>w.severity==="warning");
   const totalAssigned = (data.assignments||[]).length;
@@ -948,6 +977,69 @@ function renderResults(data) {
     ${renderWarnings(data)}`;
   section.classList.remove("d-none");
   section.scrollIntoView({behavior:"smooth"});
+
+  // Show refine section; clear previous refine feedback
+  document.getElementById("refine-section").classList.remove("d-none");
+  document.getElementById("refine-result").innerHTML = "";
+  document.getElementById("refine-status").innerHTML = "";
+}
+
+async function refinePlan() {
+  const feedback = document.getElementById("refine-text").value.trim();
+  if (!feedback) return;
+  if (!currentPlanData) { alert("Generate a plan first."); return; }
+
+  const btn      = document.getElementById("refine-btn");
+  const statusEl = document.getElementById("refine-status");
+  const resultEl = document.getElementById("refine-result");
+  btn.disabled = true;
+  btn.textContent = "Processing…";
+  statusEl.innerHTML = `<span class="status-pill status-warn">✨ Refining with AI…</span>`;
+  resultEl.innerHTML = "";
+
+  try {
+    const resp = await fetch("/api/refine", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        feedback,
+        plan:  currentPlanData,
+        rooms: collectORs(),
+        staff: collectStaff(),
+      }),
+    });
+
+    if (!resp.ok) {
+      let detail = resp.statusText;
+      try { detail = (await resp.json()).detail || detail; } catch {}
+      statusEl.innerHTML = `<span class="status-pill status-err">Error: ${esc(detail)}</span>`;
+      return;
+    }
+
+    const data = await resp.json();
+
+    // Re-render the plan with the updated assignments
+    renderResults(data);
+
+    // Show the refine summary and change log below the textarea
+    let html = "";
+    if (data.refine_summary)
+      html += `<div class="refine-summary">${esc(data.refine_summary)}</div>`;
+    if (data.changes_applied?.length)
+      html += `<ul class="change-list applied">${data.changes_applied.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
+    if (data.changes_rejected?.length)
+      html += `<ul class="change-list rejected">${data.changes_rejected.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
+
+    resultEl.innerHTML = html;
+    statusEl.innerHTML = "";
+    document.getElementById("refine-text").value = "";
+
+  } catch (err) {
+    statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Apply Changes";
+  }
 }
 
 function renderBanner(assigned, total, errCount, warnCount) {

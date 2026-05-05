@@ -170,8 +170,157 @@ Names are typically last name only or "LastFirst" run together — keep exactly 
 alreadyDeployed = false unless the name is followed by an OR number, "in room", or "deployed". \
 daytimeOR = null unless an OR number is mentioned alongside the name."""
 
+_REFINE_TOOL: dict[str, Any] = {
+    "name": "refine_plan",
+    "description": (
+        "Interpret natural language feedback and produce a list of specific edit operations "
+        "to apply to the current anesthesia coverage plan. For each change the user requests, "
+        "produce one edit operation. If a change violates a hard rule, mark it rejected and explain why."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "edits": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": [
+                                "set_attending",
+                                "set_physical",
+                                "remove_attending",
+                                "remove_physical",
+                                "swap_attendings",
+                            ],
+                            "description": (
+                                "set_attending: assign a named attending to an OR (replaces current). "
+                                "set_physical: assign a named CRNA or resident as physical provider. "
+                                "remove_attending: remove the attending from an OR (leaves it unassigned). "
+                                "remove_physical: remove physical provider (attending covers solo). "
+                                "swap_attendings: swap the attending assignments between two ORs."
+                            ),
+                        },
+                        "or_id": {
+                            "type": "integer",
+                            "description": "Primary OR number.",
+                        },
+                        "or_id_2": {
+                            "type": ["integer", "null"],
+                            "description": "Second OR number — only for swap_attendings.",
+                        },
+                        "name": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Exact name from the staff list for set_attending / set_physical. "
+                                "Use null for remove_* and swap_attendings."
+                            ),
+                        },
+                        "rejected": {
+                            "type": "boolean",
+                            "description": "True when this change violates a hard rule and must not be applied.",
+                        },
+                        "rejection_reason": {
+                            "type": ["string", "null"],
+                            "description": "Human-readable explanation of why the change was rejected.",
+                        },
+                    },
+                    "required": ["operation", "or_id", "rejected"],
+                },
+            },
+            "summary": {
+                "type": "string",
+                "description": (
+                    "Conversational response to the user: confirm what was understood, "
+                    "list what will be changed, and explain anything that cannot be done."
+                ),
+            },
+        },
+        "required": ["edits", "summary"],
+    },
+}
 
-def _client() -> anthropic.AsyncAnthropic:
+
+async def parse_refinement(
+    feedback: str,
+    plan: dict[str, Any],
+    rooms: list[dict[str, Any]],
+    staff: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Interpret natural-language feedback and return structured edit operations.
+    Returns {"edits": [...], "summary": str}.
+    Raises ValueError if no API key; RuntimeError on unexpected LLM response.
+    """
+    # Summarise current assignments as readable text for the LLM context
+    plan_lines = ["Current assignments:"]
+    for a in sorted(plan.get("assignments", []), key=lambda x: x["or_id"]):
+        phys = a.get("physical_provider")
+        phys_type = a.get("physical_provider_type", "")
+        phys_str = f"  physical={phys} ({phys_type})" if phys else "  solo attending"
+        plan_lines.append(
+            f"  OR {a['or_id']}: attending={a['attending']} ({a.get('attending_role','')}) {phys_str}"
+        )
+    for or_id in sorted(plan.get("unassigned_rooms", [])):
+        plan_lines.append(f"  OR {or_id}: UNASSIGNED")
+
+    staff_lines = ["Available staff (use exact names):"]
+    for s in staff:
+        restr = f"  [restrictions: {', '.join(s.get('restrictions', []))}]" if s.get("restrictions") else ""
+        staff_lines.append(
+            f"  {s['name']} | role={s['role']} | shift={s.get('shiftType','')}{restr}"
+        )
+
+    room_lines = ["OR details:"]
+    for r in rooms:
+        flags = []
+        if r.get("flaggedFluoro"):  flags.append("fluoro")
+        if r.get("flaggedComplex"): flags.append("complex")
+        if r.get("isNewStart"):     flags.append("new-start")
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        room_lines.append(f"  OR {r['id']}: {r.get('building','')} / {r.get('floor','')}{flag_str}")
+
+    system = "\n".join([
+        "You are a scheduling assistant for the MGH Anesthesia 5PM Coverage Planner.",
+        "The user wants to adjust the current after-5pm assignment plan.",
+        "Interpret their feedback and produce structured edit operations.",
+        "",
+        "Hard rules (enforce these — mark violating edits as rejected):",
+        "  • An attending cannot supervise rooms in both Legacy AND Lunder buildings.",
+        "  • Staff with 'no-fluoro' restriction cannot go into a fluoro-flagged OR.",
+        "  • R2 residents may only go in complex-flagged ORs.",
+        "  • A CRNA or resident must have an attending assigned to their OR.",
+        "  • Use exact names from the staff list — do not invent names.",
+        "",
+        "\n".join(plan_lines),
+        "",
+        "\n".join(staff_lines),
+        "",
+        "\n".join(room_lines),
+    ])
+
+    client = _client()
+    response = await client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2048,
+        system=system,
+        messages=[{
+            "role": "user",
+            "content": f"Please make the following changes to the plan:\n\n{feedback}",
+        }],
+        tools=[_REFINE_TOOL],
+        tool_choice={"type": "tool", "name": "refine_plan"},
+    )
+
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "refine_plan":
+            return {
+                "edits":   block.input.get("edits", []),
+                "summary": block.input.get("summary", ""),
+            }
+
+    raise RuntimeError("LLM did not return the expected tool call")
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
         raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
