@@ -142,6 +142,9 @@
                                  padding:2px 6px; font-size:.77rem; }
 
     .hint { font-size:.75rem; color:#9ca3af; margin-top:5px; }
+    .step-locked .step-body { opacity:.3; pointer-events:none; user-select:none; }
+    .step-lock-badge { font-size:.72rem; color:#9ca3af; font-weight:400; margin-left:8px; }
+    .parse-btn-sm { font-size:.76rem; padding:3px 10px; margin-top:6px; opacity:.7; }
     .d-none { display:none!important; }
 
     /* ── Refine section ──────────────────────────────────── */
@@ -173,64 +176,33 @@
 
 <div class="container-fluid py-3" style="max-width:1400px">
 
-  <!-- ── Step 1: OR Schedule ─────────────────────────────────── -->
+  <!-- ── Step 1: OR Roadmap ────────────────────────────────────── -->
   <div class="step-card">
     <div class="step-hdr">
       <span class="step-num">1</span>
-      <strong>Paste today's OR schedule</strong>
+      <strong>Today's OR Roadmap</strong>
       <span id="schedule-status"></span>
     </div>
     <div class="step-body">
       <textarea id="schedule-paste" class="paste-area" rows="7"
-        placeholder="Paste your OR schedule here (copy from spreadsheet or scheduling system).&#10;&#10;Expected columns (any order, any header name):  OR / Room   Attending   CRNA   Resident&#10;&#10;Example:&#10;OR&#9;Attending&#9;CRNA&#9;Resident&#10;4&#9;Patel&#9;Jones&#10;5&#9;Smith&#9;&#9;Kim&#10;44&#9;Rivera&#9;Santos&#10;63&#9;Chen&#9;&#9;Lee"></textarea>
-      <button class="parse-btn" id="parse-schedule-btn" onclick="parseScheduleNow()">Parse Schedule</button>
-      <p class="hint">Tip: Tab-separated (copy/paste from Excel) works best. Column headers are auto-detected.</p>
+        placeholder="Paste today's full OR roadmap here (copy from Epic). Parsing happens automatically.&#10;&#10;Format: Sections by floor (THOR · Gray · Jackson · Lunder 2/3/4 · EP · ENDO · OMOR).&#10;OR numbers appear as column headers; Staff / CRNA / Resident rows follow each section."></textarea>
+      <button class="parse-btn parse-btn-sm" id="parse-schedule-btn" onclick="parseScheduleNow()">Re-parse</button>
+      <p class="hint">Sections for EP (EP1–EP5), ENDO (ENDO6–11), and IR (ADULT RAD A–D) are recognised automatically for staff provenance.</p>
     </div>
   </div>
 
-  <!-- ── Step 2: Late ORs ────────────────────────────────────── -->
+  <!-- ── Step 2: Tonight's PM Staff ──────────────────────────── -->
   <div class="step-card">
     <div class="step-hdr">
       <span class="step-num">2</span>
-      <strong>Which ORs are running late?</strong>
-    </div>
-    <div class="step-body">
-      <input type="text" id="late-ors-input" class="late-input"
-        placeholder="e.g.  44, 63, 71, 82"
-        oninput="updateLatePreview()" autocomplete="off">
-      <p class="hint">Enter OR numbers separated by spaces or commas. Provider info is filled from the schedule above — edit any field below if needed.</p>
-      <div id="late-or-cards" class="or-cards"></div>
-      <div id="offsite-controls" style="margin-top:14px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb">
-        <span style="font-size:.83rem;font-weight:600;color:#374151">Offsite rooms running late:</span>
-        <label style="font-size:.83rem;display:flex;align-items:center;gap:5px">
-          IR
-          <input type="number" id="ir-count" min="0" max="5" value="0"
-                 style="width:44px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px"
-                 oninput="updateOffsiteCards()">
-        </label>
-        <label style="font-size:.83rem;display:flex;align-items:center;gap:5px">
-          Endo
-          <input type="number" id="endo-count" min="0" max="5" value="0"
-                 style="width:44px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px"
-                 oninput="updateOffsiteCards()">
-        </label>
-      </div>
-      <div id="offsite-cards" class="or-cards" style="margin-top:8px"></div>
-    </div>
-  </div>
-
-  <!-- ── Step 3: After-5PM Staff ─────────────────────────────── -->
-  <div class="step-card">
-    <div class="step-hdr">
-      <span class="step-num">3</span>
-      <strong>After-5PM staff</strong>
+      <strong>Tonight's PM Staff</strong>
       <span id="staff-status"></span>
     </div>
     <div class="step-body">
       <textarea id="staff-paste" class="paste-area" rows="6"
-        placeholder="Paste your after-5pm staff list here (copy from spreadsheet or call schedule).&#10;&#10;Expected columns:  Name   Role   Shift   Daytime OR (optional)   Deployed (optional)&#10;&#10;Example:&#10;Name&#9;Role&#9;Shift&#9;Daytime OR&#9;Deployed&#10;Johnson&#9;attending&#9;1-A&#10;Williams&#9;attending&#9;3p-10p&#9;63&#9;yes&#10;Jones&#9;CRNA&#9;CRNA-7a-8p&#9;44&#9;yes&#10;Kim&#9;resident&#9;3p-10p&#9;5"></textarea>
-      <button class="parse-btn" id="parse-staff-btn" onclick="parseStaffNow()">Parse Staff</button>
-      <p class="hint">Shift keywords recognised: 1-A, 2-A, 3p-10p, 7a-7p, CRNA-7a-8p, CRNA-5p-8p, R2/R3/R4. "Deployed" = already placed in a room before 5pm.</p>
+        placeholder="Paste tonight's PM staff list from Qgenda here. Parsing happens automatically.&#10;&#10;Shift labels: 1-A · 2-A · 3p-10p · 7a-7p · CRNA-7a-8p · CRNA-5p-8p · R2 / R3 / R4&#10;List each name on its own line under its shift label. Names are last-name only or full name.&#10;&#10;If a staff member was already placed in a room before 5pm, check the Deployed box in the table below."></textarea>
+      <button class="parse-btn parse-btn-sm" id="parse-staff-btn" onclick="parseStaffNow()">Re-parse</button>
+      <p class="hint">Check <strong>Deployed</strong> for any evening staff already running a room at 5pm — they'll be given priority continuity for that OR.</p>
       <div id="staff-preview" class="d-none">
         <div class="staff-tbl-wrap">
           <table class="staff-tbl">
@@ -253,6 +225,38 @@
         </div>
         <button class="btn-add-row" onclick="addStaffRow()">+ Add staff member</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Step 3: Late ORs (locked until steps 1+2 done) ────────── -->
+  <div class="step-card step-locked" id="late-ors-step">
+    <div class="step-hdr">
+      <span class="step-num">3</span>
+      <strong>Which ORs are running late?</strong>
+      <span id="late-ors-lock-badge" class="step-lock-badge">🔒 Complete steps 1 &amp; 2 first</span>
+    </div>
+    <div class="step-body">
+      <input type="text" id="late-ors-input" class="late-input"
+        placeholder="e.g.  44, 63, 71, 82"
+        oninput="updateLatePreview()" autocomplete="off">
+      <p class="hint">Enter OR numbers separated by commas. Provider info is pre-filled from the roadmap — edit any card field to reflect last-minute staffing changes. Use the Deployed checkbox in the staff table (Step 2) for evening staff already in a room at 5pm.</p>
+      <div id="late-or-cards" class="or-cards"></div>
+      <div id="offsite-controls" style="margin-top:14px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb">
+        <span style="font-size:.83rem;font-weight:600;color:#374151">Offsite rooms running late:</span>
+        <label style="font-size:.83rem;display:flex;align-items:center;gap:5px">
+          IR
+          <input type="number" id="ir-count" min="0" max="5" value="0"
+                 style="width:44px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px"
+                 oninput="updateOffsiteCards()">
+        </label>
+        <label style="font-size:.83rem;display:flex;align-items:center;gap:5px">
+          Endo
+          <input type="number" id="endo-count" min="0" max="5" value="0"
+                 style="width:44px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px"
+                 oninput="updateOffsiteCards()">
+        </label>
+      </div>
+      <div id="offsite-cards" class="or-cards" style="margin-top:8px"></div>
     </div>
   </div>
 
@@ -343,6 +347,17 @@ function esc(v) {
 let scheduleRooms = {};
 // offsiteStaff: provider name → "EP"|"IR"|"Endo" — built from non-OR schedule entries
 let offsiteStaff = {};
+// step-lock state: Step 3 (late ORs) is hidden until both are ready
+let scheduleReady = false;
+let staffReady    = false;
+
+function checkStepLocks() {
+  const step = document.getElementById("late-ors-step");
+  const badge = document.getElementById("late-ors-lock-badge");
+  const unlock = scheduleReady && staffReady;
+  step.classList.toggle("step-locked", !unlock);
+  if (badge) badge.style.display = unlock ? "none" : "";
+}
 
 function rebuildOffsiteStaff() {
   offsiteStaff = {};
@@ -690,7 +705,8 @@ async function parseScheduleNow() {
   statusEl.innerHTML = badge;
 
   btn.disabled = false;
-  btn.textContent = "Parse Schedule";
+  btn.textContent = "Re-parse";
+  if (count > 0) { scheduleReady = true; checkStepLocks(); }
   updateLatePreview();
 }
 
@@ -882,8 +898,9 @@ async function parseStaffNow() {
   statusEl.innerHTML = badge;
 
   btn.disabled = false;
-  btn.textContent = "Parse Staff";
+  btn.textContent = "Re-parse";
   renderStaffTable(staff);
+  if (staff.length > 0) { staffReady = true; checkStepLocks(); }
 }
 
 function renderStaffTable(staffList) {
@@ -1140,6 +1157,7 @@ function importJSON(input) {
       document.getElementById("staff-status").innerHTML =
         `<span class="status-pill status-ok">✓ ${(data.staff||[]).length} staff loaded from JSON</span>`;
 
+      scheduleReady = true; staffReady = true; checkStepLocks();
     } catch { alert("Invalid JSON file."); }
   };
   reader.readAsText(file);
@@ -1584,6 +1602,20 @@ function renderWarnings(data) {
     <div style="padding:12px 16px">${items}</div>
   </div>`;
 }
+
+/* =====================================================================
+   Init
+===================================================================== */
+// Auto-parse when the user pastes into either input area
+document.getElementById("schedule-paste").addEventListener("paste", () => {
+  setTimeout(parseScheduleNow, 50);
+});
+document.getElementById("staff-paste").addEventListener("paste", () => {
+  setTimeout(parseStaffNow, 50);
+});
+
+// Apply initial lock state (Step 3 starts locked)
+checkStepLocks();
 </script>
 </body>
 </html>
