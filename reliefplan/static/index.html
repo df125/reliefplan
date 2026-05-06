@@ -145,6 +145,14 @@
     .step-locked .step-body { opacity:.3; pointer-events:none; user-select:none; }
     .step-lock-badge { font-size:.72rem; color:#9ca3af; font-weight:400; margin-left:8px; }
     .parse-btn-sm { font-size:.76rem; padding:3px 10px; margin-top:6px; opacity:.7; }
+    .or-card-actions { margin-left:auto; display:flex; gap:5px; align-items:center; }
+    .confidence-btn  { font-size:.71rem; border:none; border-radius:3px; padding:2px 7px; cursor:pointer; }
+    .confidence-watching  { background:#fef3c7; color:#92400e; }
+    .confidence-confirmed { background:#dcfce7; color:#14532d; }
+    .or-dismiss-btn  { font-size:.71rem; background:#fee2e2; color:#991b1b; border:none;
+                       border-radius:3px; padding:2px 7px; cursor:pointer; }
+    .or-dismiss-btn:hover { background:#dc2626; color:#fff; }
+    .late-or-count { font-size:.75rem; font-weight:400; color:#6b7280; margin-left:6px; }
     .d-none { display:none!important; }
 
     /* ── Refine section ──────────────────────────────────── */
@@ -233,6 +241,7 @@
     <div class="step-hdr">
       <span class="step-num">3</span>
       <strong>Which ORs are running late?</strong>
+      <span id="late-or-count-badge" class="late-or-count"></span>
       <span id="late-ors-lock-badge" class="step-lock-badge">🔒 Complete steps 1 &amp; 2 first</span>
     </div>
     <div class="step-body">
@@ -350,6 +359,8 @@ let offsiteStaff = {};
 // step-lock state: Step 3 (late ORs) is hidden until both are ready
 let scheduleReady = false;
 let staffReady    = false;
+// per-card confidence: id → "watching" | "confirmed"
+const orConfidence = {};
 
 function checkStepLocks() {
   const step = document.getElementById("late-ors-step");
@@ -357,6 +368,46 @@ function checkStepLocks() {
   const unlock = scheduleReady && staffReady;
   step.classList.toggle("step-locked", !unlock);
   if (badge) badge.style.display = unlock ? "none" : "";
+}
+
+function dismissOR(id) {
+  const inp = document.getElementById("late-ors-input");
+  const ids = parseLateORNumbers(inp.value).filter(n => n !== id);
+  delete orConfidence[id];
+  inp.value = ids.length ? ids.join(", ") : "";
+  updateLatePreview();
+}
+
+function dismissOffsiteOR(id) {
+  delete orConfidence[id];
+  if (id >= 201 && id <= 209) {
+    const inp = document.getElementById("ir-count");
+    inp.value = Math.max(0, (parseInt(inp.value) || 0) - 1);
+    updateOffsiteCards();
+  } else if (id >= 211 && id <= 219) {
+    const inp = document.getElementById("endo-count");
+    inp.value = Math.max(0, (parseInt(inp.value) || 0) - 1);
+    updateOffsiteCards();
+  }
+}
+
+function toggleConfidence(id) {
+  orConfidence[id] = orConfidence[id] === "confirmed" ? "watching" : "confirmed";
+  const btn = document.getElementById(`or-conf-${id}`);
+  if (btn) {
+    const conf = orConfidence[id];
+    btn.textContent = conf === "confirmed" ? "✓ Confirmed" : "👁 Watching";
+    btn.className   = `confidence-btn confidence-${conf}`;
+  }
+}
+
+function updateLateORCount() {
+  const ids       = parseLateORNumbers(document.getElementById("late-ors-input")?.value || "");
+  const irCount   = parseInt(document.getElementById("ir-count")?.value)   || 0;
+  const endoCount = parseInt(document.getElementById("endo-count")?.value) || 0;
+  const total = ids.length + irCount + endoCount;
+  const badge = document.getElementById("late-or-count-badge");
+  if (badge) badge.textContent = total > 0 ? `${total} room${total !== 1 ? "s" : ""}` : "";
 }
 
 function rebuildOffsiteStaff() {
@@ -723,9 +774,10 @@ function updateLatePreview() {
   const ids = parseLateORNumbers(raw);
   const container = document.getElementById("late-or-cards");
 
-  if (!ids.length) { container.innerHTML = ""; return; }
+  if (!ids.length) { container.innerHTML = ""; updateLateORCount(); return; }
 
   container.innerHTML = ids.map(id => renderORCard(id)).join("");
+  updateLateORCount();
 }
 
 function updateOffsiteCards() {
@@ -736,6 +788,7 @@ function updateOffsiteCards() {
   for (let i = 0; i < irCount;   i++) cards.push(renderORCard(201 + i));
   for (let i = 0; i < endoCount; i++) cards.push(renderORCard(211 + i));
   container.innerHTML = cards.join("");
+  updateLateORCount();
 }
 
 function collectOffsiteORs() {
@@ -808,12 +861,20 @@ function renderORCard(id) {
   const isNewStart = !!(roomData.isNewStart      || roomData.newstart);
   const estEnd     = esc(roomData.estimatedEnd   || roomData.estEnd || "");
 
+  const conf = orConfidence[id] || "watching";
+  const dismissFn = (isIR || isEndo) ? "dismissOffsiteOR" : "dismissOR";
+
   return `<div class="${cardClass}" id="or-card-${id}">
     <div class="or-card-hdr">
       <span class="or-card-id">${cardLabel}</span>
       ${floor    ? `<span class="or-badge">${esc(floor)}</span>` : ""}
       ${building ? `<span class="or-badge ${bldgClass}">${esc(building)}</span>` : ""}
       ${statusHtml}
+      <div class="or-card-actions">
+        <button class="confidence-btn confidence-${conf}" id="or-conf-${id}"
+                onclick="toggleConfidence(${id})">${conf === "confirmed" ? "✓ Confirmed" : "👁 Watching"}</button>
+        <button class="or-dismiss-btn" onclick="${dismissFn}(${id})" title="Room finished — remove from list">✓ Done</button>
+      </div>
     </div>
     <div class="or-fields">
       <div class="or-field">
