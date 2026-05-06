@@ -14,6 +14,7 @@ from .algorithm import plan as run_plan
 from .loader import _parse_room, _parse_staff, VALID_SHIFT_TYPES
 from .parser import parse_or_schedule, parse_situation, parse_staff_list, parse_refinement
 from .refine import apply_edits
+from .roster import load_roster, merge_roster, save_roster
 
 app = FastAPI(title="MGH Anesthesia Coverage Planner", docs_url=None, redoc_url=None)
 
@@ -46,6 +47,15 @@ async def api_plan(request: Request) -> dict[str, Any]:
                 s.affinities.append(tag)
 
     result = run_plan(rooms, staff)
+
+    # Silently accumulate staff into the persistent roster
+    try:
+        existing_roster = load_roster()
+        updated_roster  = merge_roster(existing_roster, body.get("staff", []))
+        save_roster(updated_roster)
+    except Exception:
+        pass
+
     return {
         **dataclasses.asdict(result),
         # Lookup maps for the frontend (keyed by string for JSON compatibility)

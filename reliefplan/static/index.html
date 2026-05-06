@@ -399,6 +399,7 @@ function toggleConfidence(id) {
     btn.textContent = conf === "confirmed" ? "✓ Confirmed" : "👁 Watching";
     btn.className   = `confidence-btn confidence-${conf}`;
   }
+  scheduleSave();
 }
 
 function updateLateORCount() {
@@ -759,6 +760,7 @@ async function parseScheduleNow() {
   btn.textContent = "Re-parse";
   if (count > 0) { scheduleReady = true; checkStepLocks(); }
   updateLatePreview();
+  saveSession();
 }
 
 /* =====================================================================
@@ -774,10 +776,11 @@ function updateLatePreview() {
   const ids = parseLateORNumbers(raw);
   const container = document.getElementById("late-or-cards");
 
-  if (!ids.length) { container.innerHTML = ""; updateLateORCount(); return; }
+  if (!ids.length) { container.innerHTML = ""; updateLateORCount(); scheduleSave(); return; }
 
   container.innerHTML = ids.map(id => renderORCard(id)).join("");
   updateLateORCount();
+  scheduleSave();
 }
 
 function updateOffsiteCards() {
@@ -789,6 +792,7 @@ function updateOffsiteCards() {
   for (let i = 0; i < endoCount; i++) cards.push(renderORCard(211 + i));
   container.innerHTML = cards.join("");
   updateLateORCount();
+  scheduleSave();
 }
 
 function collectOffsiteORs() {
@@ -962,6 +966,7 @@ async function parseStaffNow() {
   btn.textContent = "Re-parse";
   renderStaffTable(staff);
   if (staff.length > 0) { staffReady = true; checkStepLocks(); }
+  saveSession();
 }
 
 function renderStaffTable(staffList) {
@@ -1017,7 +1022,7 @@ function addStaffRow(d = {}) {
       <input type="checkbox" data-field="moonlighter"${isMoonlighter?" checked":""}>
     </td>
     <td><input type="text" data-field="departureTarget" value="${esc(departureTarget)}" placeholder="22:00" style="width:56px"></td>
-    <td><button class="btn-del" onclick="this.closest('tr').remove()">×</button></td>`;
+    <td><button class="btn-del" onclick="deleteStaffRow(this)">×</button></td>`;
   document.getElementById("staff-tbody").appendChild(row);
   document.getElementById("staff-preview").classList.remove("d-none");
 }
@@ -1116,6 +1121,7 @@ async function runPlan() {
     }
     const data = await resp.json();
     renderResults(data);
+    saveSession();
   } catch (err) {
     const hint = location.protocol === "file:"
       ? "\n\nIt looks like the page was opened as a local file. Run 'reliefplan serve' and open http://localhost:8000 instead."
@@ -1219,6 +1225,7 @@ function importJSON(input) {
         `<span class="status-pill status-ok">✓ ${(data.staff||[]).length} staff loaded from JSON</span>`;
 
       scheduleReady = true; staffReady = true; checkStepLocks();
+      saveSession();
     } catch { alert("Invalid JSON file."); }
   };
   reader.readAsText(file);
@@ -1240,6 +1247,10 @@ function renderResults(data) {
 
   const section = document.getElementById("results-section");
   section.innerHTML = `
+    <div style="text-align:right;margin-bottom:8px">
+      <button class="parse-btn" onclick="copySummary()" id="copy-summary-btn"
+              style="background:#059669">📋 Copy Summary</button>
+    </div>
     ${renderBanner(totalAssigned, totalRooms, errors.length, warnings.length)}
     ${renderBoard(data)}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -1311,6 +1322,7 @@ async function refinePlan() {
 
     // Re-render the plan with the updated assignments
     renderResults(data);
+    saveSession();
 
     // Add newly stayed-late staff to the PM staff table
     if (data.staff_added?.length) {
@@ -1628,6 +1640,8 @@ async function processSituation() {
       applied.push(`Added staff: ${sa.name} (${sa.role}${sa.isMoonlighter ? ", moonlighter" : ""})`);
     }
 
+    scheduleSave();
+
     // Render summary
     statusEl.innerHTML = `<span class="status-pill status-ok">✓ Done</span>`;
     let html = "";
@@ -1665,6 +1679,213 @@ function renderWarnings(data) {
 }
 
 /* =====================================================================
+   Text export
+===================================================================== */
+function buildTextSummary(data) {
+  const rm = data.room_map || {}, sm = data.staff_map || {};
+
+  // Group assignments by attending
+  const attAssigns = {};
+  for (const a of (data.assignments || [])) {
+    if (!a.attending) continue;
+    if (!attAssigns[a.attending]) attAssigns[a.attending] = [];
+    attAssigns[a.attending].push(a);
+  }
+
+  // Determine primary building for each attending (earliest in sort order)
+  const bldgOrder = {Legacy: 0, Lunder: 1, IR: 2, Endo: 3};
+  function primaryBuilding(name) {
+    const bldgs = (attAssigns[name] || []).map(a => (rm[String(a.or_id)] || {}).building || "?");
+    bldgs.sort((a, b) => (bldgOrder[a] ?? 9) - (bldgOrder[b] ?? 9));
+    return bldgs[0] || "?";
+  }
+
+  const bldgGroups = {Legacy: [], Lunder: [], IR: [], Endo: []};
+  for (const name of Object.keys(attAssigns)) {
+    const b = primaryBuilding(name);
+    (bldgGroups[b] || bldgGroups.Legacy).push(name);
+  }
+
+  const lines = [];
+  const timeStr = new Date().toLocaleTimeString("en-US",
+    {hour: "numeric", minute: "2-digit", timeZone: "America/New_York"});
+  lines.push("MGH ANESTHESIA — 5PM+ COVERAGE");
+  lines.push(`Generated: ${timeStr} ET`);
+  lines.push("");
+
+  for (const [bldg, names] of Object.entries(bldgGroups)) {
+    if (!names.length) continue;
+    names.sort((a, b) => a.localeCompare(b));
+    const roomCount = names.reduce((n, nm) => n + (attAssigns[nm] || []).length, 0);
+    lines.push(`── ${bldg.toUpperCase()} (${roomCount} room${roomCount !== 1 ? "s" : ""}) ──`);
+    for (const name of names) {
+      const assigns = (attAssigns[name] || []).sort((a, b) => a.or_id - b.or_id);
+      const shift    = (sm[name] || {}).shift_type || "";
+      const isSolo   = assigns.some(a => a.attending_role === "solo");
+      const roleTag  = isSolo ? "SOLO" : "SUPV";
+      const orParts  = assigns.map(a => {
+        const r = rm[String(a.or_id)] || {};
+        let part = `OR ${a.or_id}`;
+        if (r.floor) part += ` (${r.floor})`;
+        if (a.physical_provider)
+          part += ` → ${a.physical_provider} [${a.physical_provider_type || "?"}]`;
+        return part;
+      });
+      const shiftTag = shift ? ` [${shift}]` : "";
+      lines.push(`${name}${shiftTag}  ${roleTag}  ${orParts.join("  ·  ")}`);
+    }
+    lines.push("");
+  }
+
+  const unassigned = data.unassigned_rooms || [];
+  if (unassigned.length) {
+    lines.push(`── UNASSIGNED (${unassigned.length} room${unassigned.length !== 1 ? "s" : ""}) ──`);
+    for (const id of [...unassigned].sort((a, b) => a - b)) {
+      const r = rm[String(id)] || {};
+      lines.push(`OR ${id}${r.floor ? ` (${r.floor})` : ""} — no attending assigned`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+async function copySummary() {
+  if (!currentPlanData) return;
+  const text = buildTextSummary(currentPlanData);
+  const btn  = document.getElementById("copy-summary-btn");
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      btn.textContent = "✓ Copied!";
+      setTimeout(() => { btn.textContent = "📋 Copy Summary"; }, 2000);
+    }
+  } catch {
+    // Clipboard API unavailable — show a textarea for manual copy
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;top:10%;left:50%;transform:translateX(-50%);"
+      + "width:min(600px,90vw);height:60vh;z-index:9999;font-family:monospace;"
+      + "font-size:.8rem;padding:12px;border:2px solid #2563eb;border-radius:6px";
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    alert("Press Ctrl+C / Cmd+C to copy, then OK to close.");
+    ta.remove();
+  }
+}
+
+/* =====================================================================
+   Session persistence — daily key, resets at midnight ET
+===================================================================== */
+function getTodayKeyET() {
+  return "reliefplan_" + new Date().toLocaleDateString("en-CA", {timeZone: "America/New_York"});
+}
+
+let _saveTimer = null;
+function scheduleSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveSession, 800);
+}
+
+function deleteStaffRow(btn) {
+  btn.closest("tr").remove();
+  scheduleSave();
+}
+
+function saveSession() {
+  const key = getTodayKeyET();
+  try {
+    const state = {
+      v:             1,
+      schedulePaste: document.getElementById("schedule-paste")?.value || "",
+      staffPaste:    document.getElementById("staff-paste")?.value    || "",
+      scheduleRooms,
+      scheduleReady,
+      staffReady,
+      lateORsInput:  document.getElementById("late-ors-input")?.value  || "",
+      irCount:       document.getElementById("ir-count")?.value        || "0",
+      endoCount:     document.getElementById("endo-count")?.value      || "0",
+      orConf:        Object.fromEntries(Object.entries(orConfidence)),
+      staff:         collectStaff(),
+      ors:           collectORs(),
+      plan:          currentPlanData || null,
+    };
+    localStorage.setItem(key, JSON.stringify(state));
+    // Prune older daily keys
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("reliefplan_") && k !== key) localStorage.removeItem(k);
+    }
+  } catch (e) { console.warn("saveSession:", e); }
+}
+
+function restoreSession() {
+  const key = getTodayKeyET();
+  const raw = localStorage.getItem(key);
+  if (!raw) return false;
+  try {
+    const s = JSON.parse(raw);
+    if (!s || s.v !== 1) return false;
+
+    if (s.schedulePaste) document.getElementById("schedule-paste").value = s.schedulePaste;
+    if (s.staffPaste)    document.getElementById("staff-paste").value    = s.staffPaste;
+
+    scheduleRooms = s.scheduleRooms || {};
+    rebuildOffsiteStaff();
+    scheduleReady = !!s.scheduleReady;
+    staffReady    = !!s.staffReady;
+
+    if (s.lateORsInput) document.getElementById("late-ors-input").value = s.lateORsInput;
+    if (s.irCount)      document.getElementById("ir-count").value       = s.irCount;
+    if (s.endoCount)    document.getElementById("endo-count").value     = s.endoCount;
+
+    if (s.orConf) {
+      for (const [k, v] of Object.entries(s.orConf)) orConfidence[+k || k] = v;
+    }
+
+    const orCount = Object.keys(scheduleRooms).filter(k => !isNaN(+k)).length;
+    if (orCount > 0) {
+      document.getElementById("schedule-status").innerHTML =
+        `<span class="status-pill status-ok">✓ ${orCount} rooms (restored)</span>`;
+    }
+
+    if (s.staff && s.staff.length) {
+      renderStaffTable(s.staff);
+      document.getElementById("staff-status").innerHTML =
+        `<span class="status-pill status-ok">✓ ${s.staff.length} staff (restored)</span>`;
+    }
+
+    checkStepLocks();
+    updateLatePreview();
+    updateOffsiteCards();
+
+    // Restore any edited OR card field values on top of the freshly rendered cards
+    if (s.ors) {
+      for (const r of s.ors) {
+        const card = document.getElementById(`or-card-${r.id}`);
+        if (!card) continue;
+        const sv = (f, v) => { const el = card.querySelector(`[data-field="${f}"]`); if (el && v != null) el.value = v; };
+        const sc = (f, v) => { const el = card.querySelector(`[data-field="${f}"]`); if (el) el.checked = !!v; };
+        sv("attending",    r.daytimeAttending);
+        sv("crna",         r.daytimeCRNA);
+        sv("resident",     r.daytimeResident);
+        sv("estimatedEnd", r.estimatedEnd);
+        sc("complex",      r.flaggedComplex);
+        sc("fluoro",       r.flaggedFluoro);
+        sc("newstart",     r.isNewStart);
+      }
+    }
+
+    if (s.plan) {
+      currentPlanData = s.plan;
+      renderResults(s.plan);
+    }
+
+    return true;
+  } catch (e) { console.warn("restoreSession:", e); return false; }
+}
+
+/* =====================================================================
    Init
 ===================================================================== */
 // Auto-parse when the user pastes into either input area
@@ -1675,8 +1896,12 @@ document.getElementById("staff-paste").addEventListener("paste", () => {
   setTimeout(parseStaffNow, 50);
 });
 
-// Apply initial lock state (Step 3 starts locked)
-checkStepLocks();
+// Persist staff table edits
+document.getElementById("staff-tbody").addEventListener("input",  scheduleSave);
+document.getElementById("staff-tbody").addEventListener("change", scheduleSave);
+
+// Restore today's session; fall back to applying the initial lock state
+if (!restoreSession()) checkStepLocks();
 </script>
 </body>
 </html>
