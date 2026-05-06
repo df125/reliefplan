@@ -99,6 +99,9 @@ class _AttState:
         """Return True if this attending can take the room solo (no other rooms)."""
         if self.is_solo or self.total_supervised > 0:
             return False
+        # 1-A and 2-A are never assigned solo — they always supervise with a physical provider
+        if self.staff.shift_type in ("1-A", "2-A"):
+            return False
         if room.flagged_fluoro and "no-fluoro" in self.staff.restrictions:
             return False
         return True
@@ -147,13 +150,17 @@ def _supervision_score(att: _AttState, room: OperatingRoom, physical_type: str) 
     if room.building in att.staff.affinities:
         score += 10
 
-    # Prefer 3p-10p for heavy supervision, penalise 1-A for extra load
+    # Prefer 3p-10p for heavy supervision; keep 1-A light (ideal is 1:1 for R1 reserve)
     shift = att.staff.shift_type
     if shift == "3p-10p":
         score += 15
+    elif shift == "2-A":
+        # 2-A comfortable at 2–3 rooms; small bonus when they have room to take more
+        if att.total_supervised < 3:
+            score += 5
     elif shift == "1-A":
-        # Keep 1-A light; penalise if they already have rooms
-        score -= att.total_supervised * 20
+        # Strong penalty for each additional room — 1:1 is ideal to preserve R1 reserve
+        score -= att.total_supervised * 35
 
     # Prefer already-deployed attendings in their room (continuity rule 7)
     if att.staff.already_deployed and att.staff.daytime_or == room.id:
@@ -192,6 +199,8 @@ def _find_crna(
     pool: List[StaffMember],
     used: Set[str],
     staff_set: Set[str],
+    late_or_ids: Optional[Set[int]] = None,
+    crna_assigned_ors: Optional[Set[int]] = None,
 ) -> Optional[StaffMember]:
     """Return best available CRNA for this room, or None."""
     candidates = [
@@ -220,6 +229,16 @@ def _find_crna(
         # EP CRNAs often tied up until 5:15pm — assign last
         if s.daytime_location == "EP":
             sc -= 60
+        # Reserve penalty: don't steal a CRNA from their own continuity room.
+        # If this CRNA's daytime OR is a late room that hasn't been CRNA-assigned yet,
+        # penalise assigning them here so their continuity room gets first pick.
+        if (late_or_ids is not None
+                and crna_assigned_ors is not None
+                and s.daytime_or
+                and s.daytime_or in late_or_ids
+                and s.daytime_or != room.id
+                and s.daytime_or not in crna_assigned_ors):
+            sc -= 70
         return sc
 
     return max(candidates, key=score)
@@ -298,23 +317,32 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # ------------------------------------------------------------------ #
     # Step 2 – Place CRNAs                                                 #
     # ------------------------------------------------------------------ #
-    # Sort so continuity rooms (daytime CRNA available) are tried first
+    late_or_ids: Set[int] = {r.id for r in late_rooms}
+
+    # Sort so continuity rooms (daytime CRNA available by name OR daytime_or match) are first
+    crna_or_map: Dict[int, str] = {s.daytime_or: s.name for s in crna_pool if s.daytime_or}
     rooms_sorted_crna = sorted(
         late_rooms,
         key=lambda r: (
-            0 if (r.daytime_crna and r.daytime_crna in staff_names) else 1,
+            0 if (r.daytime_crna and r.daytime_crna in staff_names)
+              or r.id in crna_or_map else 1,
             0 if r.flagged_complex else 1,
         ),
     )
 
+    crna_assigned_ors: Set[int] = set()
     for room in rooms_sorted_crna:
         if room.id in physical:
             continue
-        crna = _find_crna(room, crna_pool, used_providers, staff_names)
+        crna = _find_crna(
+            room, crna_pool, used_providers, staff_names,
+            late_or_ids=late_or_ids, crna_assigned_ors=crna_assigned_ors,
+        )
         if crna:
             is_cont = crna.name == room.daytime_crna
             physical[room.id] = (crna.name, "CRNA", is_cont)
             used_providers.add(crna.name)
+            crna_assigned_ors.add(room.id)
 
     # ------------------------------------------------------------------ #
     # Step 3 – Place residents (only after CRNA pool exhausted per room)   #
@@ -355,12 +383,25 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # Rooms with a physical provider need supervisors
     rooms_needing_supervisor = [r for r in late_rooms if r.id in physical]
 
-    # Sort supervised rooms: deployed attendings' continuity rooms first,
-    # then by floor/building so geographic clustering emerges naturally
+    # Sort supervised rooms so high-affinity rooms are processed first.
+    # This ensures each room's natural attending is available when that room is reached,
+    # rather than being consumed earlier by a room they have weaker affinity for.
     def _supervised_sort_key(r: OperatingRoom):
         prov_name, prov_type, _ = physical[r.id]
         res_type_order = 0 if prov_type == "resident" else 1  # residents constrain ratio more
-        return (r.building, r.floor, res_type_order)
+        # Compute peak affinity any unassigned attending has for this room
+        best_affinity = 0
+        for att in attending_pool:
+            sc = 0
+            if att.daytime_or == r.id:
+                sc += 80
+            if r.floor in att.affinities:
+                sc += 20
+            if r.building in att.affinities:
+                sc += 10
+            best_affinity = max(best_affinity, sc)
+        # High-affinity rooms first (-best_affinity), then residents before CRNAs
+        return (-best_affinity, res_type_order, r.building, r.floor)
 
     rooms_needing_supervisor.sort(key=_supervised_sort_key)
 
@@ -497,12 +538,32 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             ))
             break
 
-    # 7b: Check 1-A reserve capacity
+    # 7b: Check 1-A reserve capacity (ideal is 1:1 to pair with R1 for emergencies)
     one_a_attendings = [a for a in attending_pool if a.shift_type == "1-A"]
     for att in one_a_attendings:
         att_st = att_states[att.name]
         total = att_st.total_supervised + (1 if att_st.is_solo else 0)
-        if total >= 4:
+        if total == 0:
+            warnings.append(CoverageWarning(
+                severity="info",
+                message=f"1-A attending {att.name} is unassigned — available for R1 emergency cases",
+                or_id=None,
+            ))
+        elif total == 1:
+            warnings.append(CoverageWarning(
+                severity="info",
+                message=f"1-A attending {att.name} has 1 room — "
+                        "ideal load: can expand 2:1 with R1 if an emergency case books",
+                or_id=None,
+            ))
+        elif total >= 2 and total < 4:
+            warnings.append(CoverageWarning(
+                severity="warning",
+                message=f"1-A attending {att.name} has {total} room(s) — "
+                        "reduced R1 reserve; consider redistributing",
+                or_id=None,
+            ))
+        elif total >= 4:
             warnings.append(CoverageWarning(
                 severity="warning",
                 message=f"1-A attending {att.name} has {total} room(s) — "
@@ -712,17 +773,8 @@ def _soft_preference_warnings(
     if resident_supervised > 0 and crna_supervised > 0:
         pass  # normal mixed usage, no warning needed
 
-    # Soft 3: 1-A attending management
-    for att in attending_pool:
-        if att.shift_type != "1-A":
-            continue
-        att_st = att_states[att.name]
-        if att_st.total_supervised >= 3:
-            warnings.append(CoverageWarning(
-                severity="warning",
-                message=f"1-A {att.name} is supervising {att_st.total_supervised} rooms — "
-                        "consider redistributing to preserve emergency reserve",
-            ))
+    # Soft 3: 1-A attending management (covered by step 7b; skip to avoid duplicates)
+    pass
 
     # Soft 5: long cases (past 8pm) should go to 1-A, 2-A, or 3p-10p
     late_shifts = {"1-A", "2-A", "3p-10p"}

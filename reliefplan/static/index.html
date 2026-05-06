@@ -1456,6 +1456,16 @@ function renderBoard(data) {
   </div>`;
 }
 
+function loadBadge(count, role) {
+  if (role === "solo") {
+    return `<span style="display:inline-block;min-width:28px;text-align:center;padding:2px 6px;border-radius:4px;font-weight:700;font-size:.82rem;background:#f3f4f6;color:#374151">solo</span>`;
+  }
+  const colors = count <= 1 ? ["#dcfce7","#14532d"]
+               : count <= 3 ? ["#fef9c3","#713f12"]
+               : ["#fee2e2","#991b1b"];
+  return `<span style="display:inline-block;min-width:28px;text-align:center;padding:2px 6px;border-radius:4px;font-weight:700;font-size:.82rem;background:${colors[0]};color:${colors[1]}">×${count}</span>`;
+}
+
 function renderSupervisorGroups(data) {
   const sm = data.staff_map||{}, rm = data.room_map||{}, groups = data.supervisor_groups||{};
   const roles = {};
@@ -1472,7 +1482,7 @@ function renderSupervisorGroups(data) {
       <td><span class="badge-shift">${esc(shift)}</span></td>
       <td>${role==="solo"?`<span class="role-solo">solo</span>`:`<span class="role-supv">supv</span>`}</td>
       <td>${descs}</td>
-      <td style="text-align:center;font-weight:700">${ids.length}</td>
+      <td style="text-align:center">${loadBadge(ids.length, role)}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="5" style="text-align:center;color:#9ca3af">No groups</td></tr>`;
   return `<div class="section-card" style="height:100%">
