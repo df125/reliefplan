@@ -35,8 +35,21 @@ _SCHEDULE_TOOL: dict[str, Any] = {
                     "type": "object",
                     "properties": {
                         "id": {
-                            "type": "integer",
-                            "description": "OR number (1–99). Strip any 'OR' prefix.",
+                            "type": "string",
+                            "description": (
+                                "OR number (1–99) as a string for standard ORs. "
+                                "For EP/IR/Endo named columns use the column name as-is (e.g. 'EP1', 'ENDO6', 'ADULT RAD A')."
+                            ),
+                        },
+                        "locationType": {
+                            "type": "string",
+                            "enum": ["OR", "IR", "Endo", "EP"],
+                            "description": (
+                                "OR for numbered operating rooms. "
+                                "EP for EP1-EP5/EP Mid columns in Cardiac section. "
+                                "IR for ADULT RAD A-D columns in OMOR section. "
+                                "Endo for ENDO6-ENDO11 columns in ENDO section."
+                            ),
                         },
                         "daytimeAttending": {
                             "type": "string",
@@ -376,8 +389,16 @@ followed by more OR numbers.
 - "Tutor, Tutee" is a teaching-pair PLACEHOLDER, NOT a real person — treat as empty string.
 - Names appear as "Last, First M" or "Last, First Middle" — keep exactly as shown.
 - OR numbers range 1–99; ignore any text that is not a 1–2 digit integer in the OR-number row.
+- Within the "Cardiac" section, columns with headers matching "EP1"–"EP5" or "EP Mid" are EP labs. \
+Set locationType="EP" for these and use the column name as the id. Do not create entries for Cath1/Cath2/Echo.
+- OR 48 in the Cardiac section is a standard gen surg OR; set locationType="OR", id="48". \
+Ignore ORs 45, 46, 47, 49 (cardiac-specific, not relevant for evening coverage).
+- The "ENDO" section contains Endo rooms (ENDO6–ENDO11). Set locationType="Endo" and use the column name as the id.
+- Within the "OMOR" section, columns matching "ADULT RAD A/B/C/D" are IR rooms. \
+Set locationType="IR" and use the column name as the id. Ignore all other OMOR columns (OB, PACU, ECT, etc.).
+- For EP/IR/Endo rooms: still extract attending and CRNA names — these are used for daytime provenance only.
 
-Return one entry per OR number found."""
+Return one entry per OR or named offsite room found."""
 
 _SYSTEM_STAFF = """\
 You are a data-extraction assistant for the MGH Anesthesia Department. \
@@ -509,19 +530,31 @@ async def parse_or_schedule(text: str) -> dict[str, Any]:
         raise RuntimeError("LLM did not return the expected function call")
 
     rooms: dict[str, Any] = {}
+    offsite_count = 0
     for room in args.get("rooms", []):
-        or_id = room.get("id")
-        try:
-            or_id = int(or_id)
-        except (TypeError, ValueError):
-            continue
-        if 1 <= or_id <= 99:
-            rooms[str(or_id)] = {
-                "attending": room.get("daytimeAttending") or None,
-                "crna":      room.get("daytimeCRNA")      or None,
-                "resident":  room.get("daytimeResident")  or None,
-            }
-    return {"rooms": rooms, "count": len(rooms), "warnings": []}
+        or_id_raw = room.get("id")
+        loc_type = room.get("locationType", "OR")
+        room_entry = {
+            "attending":    room.get("daytimeAttending") or None,
+            "crna":         room.get("daytimeCRNA")      or None,
+            "resident":     room.get("daytimeResident")  or None,
+            "locationType": loc_type,
+        }
+        if loc_type != "OR":
+            # Named offsite room — store with string key for provenance only
+            name_key = str(or_id_raw) if or_id_raw else None
+            if name_key:
+                rooms[name_key] = room_entry
+                offsite_count += 1
+        else:
+            try:
+                or_id = int(or_id_raw)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= or_id <= 99:
+                rooms[str(or_id)] = room_entry
+    or_count = len(rooms) - offsite_count
+    return {"rooms": rooms, "count": or_count, "warnings": []}
 
 
 async def parse_staff_list(text: str) -> dict[str, Any]:

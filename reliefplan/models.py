@@ -31,6 +31,7 @@ class StaffMember:
     already_deployed: bool = False   # 2-A / 3p-10p placed in a room before 5pm
     is_moonlighter: bool = False
     departure_target: str = ""       # e.g. "22:00", display-only
+    daytime_location: str = ""       # "EP" | "IR" | "Endo" | "" for main OR
 
 
 @dataclass

@@ -113,6 +113,8 @@
     .row-legacy { background:var(--legacy)!important; }
     .row-lunder { background:var(--lunder)!important; }
     .row-unassigned { background:var(--unassigned)!important; }
+    .row-offsite { background:#fdf4ff !important; }
+    .or-badge.offsite { background:#7c3aed; color:#fff; }
     .role-solo { color:#16a34a; font-weight:700; }
     .role-supv { color:#2563eb; font-weight:700; }
     .cont-mark { color:#16a34a; font-weight:700; }
@@ -198,6 +200,22 @@
         oninput="updateLatePreview()" autocomplete="off">
       <p class="hint">Enter OR numbers separated by spaces or commas. Provider info is filled from the schedule above — edit any field below if needed.</p>
       <div id="late-or-cards" class="or-cards"></div>
+      <div id="offsite-controls" style="margin-top:14px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#f9fafb;border-radius:6px;border:1px solid #e5e7eb">
+        <span style="font-size:.83rem;font-weight:600;color:#374151">Offsite rooms running late:</span>
+        <label style="font-size:.83rem;display:flex;align-items:center;gap:5px">
+          IR
+          <input type="number" id="ir-count" min="0" max="5" value="0"
+                 style="width:44px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px"
+                 oninput="updateOffsiteCards()">
+        </label>
+        <label style="font-size:.83rem;display:flex;align-items:center;gap:5px">
+          Endo
+          <input type="number" id="endo-count" min="0" max="5" value="0"
+                 style="width:44px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px"
+                 oninput="updateOffsiteCards()">
+        </label>
+      </div>
+      <div id="offsite-cards" class="or-cards" style="margin-top:8px"></div>
     </div>
   </div>
 
@@ -289,18 +307,21 @@
 const OR_TO_FLOOR = {};
 for (const id of [4,14,15,16,43,44])                         OR_TO_FLOOR[id] = "THOR";
 for (const id of [5,6,7,10,11])                              OR_TO_FLOOR[id] = "Gray";
-for (const id of [12,32,33,34,35,36,37,38,39,40,41,42])     OR_TO_FLOOR[id] = "Jackson";
+for (const id of [12,32,33,34,35,36,37,38,39,40,41,42,48])  OR_TO_FLOOR[id] = "Jackson";
 for (let i = 51; i <= 54; i++)                               OR_TO_FLOOR[i]  = "L2";
 for (let i = 61; i <= 73; i++)                               OR_TO_FLOOR[i]  = "L3";
 OR_TO_FLOOR[17] = "L4";
 for (let i = 81; i <= 91; i++)                               OR_TO_FLOOR[i]  = "L4";
+for (let i = 201; i <= 209; i++)                             OR_TO_FLOOR[i]  = "IR";
+for (let i = 211; i <= 219; i++)                             OR_TO_FLOOR[i]  = "Endo";
 
 const FLOOR_TO_BUILDING = {
   THOR:"Legacy", Gray:"Legacy", Jackson:"Legacy",
   L2:"Lunder",   L3:"Lunder",   L4:"Lunder",
+  IR:"IR",        Endo:"Endo",   EP:"EP",
 };
 
-const FLOOR_ORDER = {THOR:0, Gray:1, Jackson:2, L2:3, L3:4, L4:5};
+const FLOOR_ORDER = {THOR:0, Gray:1, Jackson:2, L2:3, L3:4, L4:5, IR:10, Endo:11};
 
 const SHIFTS = {
   attending: ["1-A","2-A","7a-7p","3p-10p"],
@@ -318,8 +339,21 @@ function esc(v) {
 /* =====================================================================
    Application state
 ===================================================================== */
-// scheduleRooms: orId → {attending, crna, resident}  (from paste)
+// scheduleRooms: orId/key → {attending, crna, resident, locationType}  (from paste)
 let scheduleRooms = {};
+// offsiteStaff: provider name → "EP"|"IR"|"Endo" — built from non-OR schedule entries
+let offsiteStaff = {};
+
+function rebuildOffsiteStaff() {
+  offsiteStaff = {};
+  for (const [key, room] of Object.entries(scheduleRooms)) {
+    const loc = room.locationType;
+    if (loc && loc !== "OR") {
+      for (const name of [room.attending, room.crna, room.resident].filter(Boolean))
+        offsiteStaff[name] = loc;
+    }
+  }
+}
 
 /* =====================================================================
    OR schedule parser
@@ -339,13 +373,23 @@ function parseScheduleText(raw) {
     return n >= 1 && n <= 99 ? n : null;
   };
 
+  // Returns {key, loc} for named EP/IR/Endo columns, else null.
+  const toOffsite = cell => {
+    const t = cell.trim();
+    if (/^EP\d+$/i.test(t) || /^EP\s*Mid$/i.test(t)) return {key: t, loc: "EP"};
+    if (/^ENDO\d+$/i.test(t))                          return {key: t, loc: "Endo"};
+    if (/^ADULT\s*RAD\s*[A-D]$/i.test(t))              return {key: t, loc: "IR"};
+    return null;
+  };
+
   // Check if this is an "MGH transposed" schedule (OR numbers as columns).
   // Heuristic: at least one row has ≥2 cells (beyond col 0) that are valid OR ids.
   const isTransposed = rows.some(r => r.slice(1).filter(c => toOR(c) !== null).length >= 2);
 
   if (isTransposed) {
     // Transposed format: OR numbers are column headers, Staff/CRNA/Resident are row labels.
-    let currentORs = []; // [{colIdx, orId}]
+    // currentORs entries: {colIdx, orId} for integer ORs or {colIdx, key, loc} for offsite named cols.
+    let currentORs = [];
 
     for (const row of rows) {
       if (!row.some(c => c)) continue;
@@ -355,34 +399,53 @@ function parseScheduleText(raw) {
       // Skip administrative lines
       if (/^team\s*lead|^resource\b/.test(col0)) continue;
 
-      // Detect an OR-numbers row: ≥1 cell beyond col 0 is a valid OR id
-      const orCols = row.map((c, i) => ({colIdx: i, orId: toOR(c)}))
-                        .filter(x => x.colIdx > 0 && x.orId !== null);
-      if (orCols.length >= 1) {
+      // Detect an OR-numbers row: ≥1 cell beyond col 0 is a valid OR id or named offsite col
+      const orCols = [];
+      for (let i = 1; i < row.length; i++) {
+        const c = row[i];
+        const orId = toOR(c);
+        if (orId !== null) {
+          orCols.push({colIdx: i, orId, key: orId, loc: "OR"});
+        } else {
+          const off = toOffsite(c);
+          if (off) orCols.push({colIdx: i, orId: null, key: off.key, loc: off.loc});
+        }
+      }
+      if (orCols.length >= 1 && orCols.some(x => x.loc === "OR")) {
+        // Only switch currentORs when we have at least one integer OR col (section header row)
         currentORs = orCols;
-        for (const {orId} of orCols)
-          if (!rooms[orId]) rooms[orId] = {attending: null, crna: null, resident: null};
+        for (const {key, loc} of orCols) {
+          if (!rooms[key]) rooms[key] = {attending: null, crna: null, resident: null, locationType: loc};
+        }
+        continue;
+      } else if (orCols.length >= 1 && orCols.every(x => x.loc !== "OR")) {
+        // Pure offsite named-column row (e.g. EP section header with only EP1-EP5)
+        currentORs = orCols;
+        for (const {key, loc} of orCols) {
+          if (!rooms[key]) rooms[key] = {attending: null, crna: null, resident: null, locationType: loc};
+        }
         continue;
       }
 
       // Detect a Staff/CRNA/Resident row
       let field = null;
-      if (/^staff/.test(col0))    field = "attending";
+      if (/^staff/.test(col0))     field = "attending";
       else if (/^crna/.test(col0)) field = "crna";
       else if (/^resid/.test(col0)) field = "resident";
 
       if (field && currentORs.length) {
-        for (const {colIdx, orId} of currentORs) {
+        for (const {colIdx, key} of currentORs) {
           const val = row[colIdx] || "";
           if (val && !/^tutor[,\s]+tutee/i.test(val))
-            rooms[orId][field] = val;
+            rooms[key][field] = val;
         }
       }
     }
 
-    const count = Object.keys(rooms).length;
-    if (count === 0) warnings.push("No OR rooms found in transposed schedule.");
-    return {rooms, warnings, count};
+    // Count only integer OR rooms for the display count
+    const orCount = Object.keys(rooms).filter(k => !isNaN(parseInt(k, 10))).length;
+    if (orCount === 0) warnings.push("No OR rooms found in transposed schedule.");
+    return {rooms, warnings, count: orCount};
   }
 
   // Fallback: standard columnar format (OR, Attending, CRNA, Resident as columns)
@@ -608,13 +671,15 @@ async function parseScheduleNow() {
     }
   }
 
-  // Normalise: LLM returns {"1": {attending,crna,resident}}, local parser same shape but keyed differently
+  // Normalise: integer keys become numbers; string offsite keys preserved as-is
   const normalised = {};
   for (const [k, v] of Object.entries(rooms)) {
     const id = parseInt(k, 10);
     if (!isNaN(id)) normalised[id] = v;
+    else if (v.locationType && v.locationType !== "OR") normalised[k] = v;
   }
   scheduleRooms = normalised;
+  rebuildOffsiteStaff();
 
   const label = usedAI ? "✨ AI-parsed" : "local parser";
   const badge = warnings.length
@@ -647,7 +712,51 @@ function updateLatePreview() {
   container.innerHTML = ids.map(id => renderORCard(id)).join("");
 }
 
+function updateOffsiteCards() {
+  const irCount   = Math.max(0, parseInt(document.getElementById("ir-count")?.value)   || 0);
+  const endoCount = Math.max(0, parseInt(document.getElementById("endo-count")?.value) || 0);
+  const container = document.getElementById("offsite-cards");
+  const cards = [];
+  for (let i = 0; i < irCount;   i++) cards.push(renderORCard(201 + i));
+  for (let i = 0; i < endoCount; i++) cards.push(renderORCard(211 + i));
+  container.innerHTML = cards.join("");
+}
+
+function collectOffsiteORs() {
+  const irCount   = Math.max(0, parseInt(document.getElementById("ir-count")?.value)   || 0);
+  const endoCount = Math.max(0, parseInt(document.getElementById("endo-count")?.value) || 0);
+  const rooms = [];
+  for (let i = 0; i < irCount; i++) {
+    const id = 201 + i;
+    const card = document.getElementById(`or-card-${id}`);
+    const get  = field => card?.querySelector(`[data-field="${field}"]`)?.value?.trim() || null;
+    rooms.push({
+      id, building: "IR", floor: "IR",
+      daytimeAttending: get("attending"), daytimeCRNA: get("crna"), daytimeResident: get("resident"),
+      isLateRunning: true, flaggedComplex: false, flaggedFluoro: false,
+      estimatedEnd: get("estimatedEnd"), isNewStart: false,
+    });
+  }
+  for (let i = 0; i < endoCount; i++) {
+    const id = 211 + i;
+    const card = document.getElementById(`or-card-${id}`);
+    const get  = field => card?.querySelector(`[data-field="${field}"]`)?.value?.trim() || null;
+    rooms.push({
+      id, building: "Endo", floor: "Endo",
+      daytimeAttending: get("attending"), daytimeCRNA: get("crna"), daytimeResident: get("resident"),
+      isLateRunning: true, flaggedComplex: false, flaggedFluoro: false,
+      estimatedEnd: get("estimatedEnd"), isNewStart: false,
+    });
+  }
+  return rooms;
+}
+
 function renderORCard(id) {
+  const isIR   = id >= 201 && id <= 209;
+  const isEndo = id >= 211 && id <= 219;
+  const cardLabel = isIR   ? `IR Room ${id - 200}`
+                  : isEndo ? `Endo Room ${id - 210}`
+                  : `OR ${id}`;
   const floor    = OR_TO_FLOOR[id] || null;
   const building = floor ? FLOOR_TO_BUILDING[floor] : null;
   const sched    = scheduleRooms[id];
@@ -658,6 +767,9 @@ function renderORCard(id) {
   if (!floor) {
     cardClass += "invalid";
     statusHtml = `<span class="or-card-status" style="color:#dc2626">⚠ unknown OR</span>`;
+  } else if (isIR || isEndo) {
+    cardClass += "noschedule";
+    statusHtml = "";
   } else if (sched) {
     cardClass += "found";
     statusHtml = `<span class="or-card-status" style="color:#16a34a">✓ in schedule</span>`;
@@ -666,8 +778,10 @@ function renderORCard(id) {
     statusHtml = `<span class="or-card-status" style="color:#b45309">⚠ not in schedule</span>`;
   }
 
-  const bldgClass = building === "Legacy" ? "legacy" : "lunder";
-  const att = esc(sched?.attending || "");
+  const bldgClass = building === "Legacy" ? "legacy"
+                  : building === "IR" || building === "Endo" ? "offsite"
+                  : "lunder";
+  const att  = esc(sched?.attending || "");
   const crna = esc(sched?.crna || "");
   const res  = esc(sched?.resident || "");
 
@@ -680,7 +794,7 @@ function renderORCard(id) {
 
   return `<div class="${cardClass}" id="or-card-${id}">
     <div class="or-card-hdr">
-      <span class="or-card-id">OR ${id}</span>
+      <span class="or-card-id">${cardLabel}</span>
       ${floor    ? `<span class="or-badge">${esc(floor)}</span>` : ""}
       ${building ? `<span class="or-badge ${bldgClass}">${esc(building)}</span>` : ""}
       ${statusHtml}
@@ -791,9 +905,17 @@ function addStaffRow(d = {}) {
 
   const isMoonlighter = !!(d.isMoonlighter || d.is_moonlighter);
   const departureTarget = d.departureTarget || d.departure_target || "";
+  const daytimeLoc = d.daytimeLocation || d.daytime_location || offsiteStaff[d.name] || "";
+  const epBadge = daytimeLoc === "EP"
+    ? `<span class="badge-shift" style="background:#0891b2;margin-left:4px">EP</span>`
+    : daytimeLoc === "IR"
+    ? `<span class="badge-shift" style="background:#7c3aed;margin-left:4px">IR</span>`
+    : daytimeLoc === "Endo"
+    ? `<span class="badge-shift" style="background:#065f46;margin-left:4px">Endo</span>`
+    : "";
   const row = document.createElement("tr");
   row.innerHTML = `
-    <td><input type="text" data-field="name" value="${esc(d.name||"")}" placeholder="Dr. Smith" style="min-width:130px"></td>
+    <td><input type="text" data-field="name" value="${esc(d.name||"")}" placeholder="Dr. Smith" style="min-width:130px">${epBadge}<input type="hidden" data-field="daytimeLocation" value="${esc(daytimeLoc)}"></td>
     <td>
       <select data-field="role" onchange="onRoleChange(this)">
         ${["attending","CRNA","resident"].map(r =>
@@ -844,7 +966,7 @@ function onRoleChange(sel) {
 ===================================================================== */
 function collectORs() {
   const ids = parseLateORNumbers(document.getElementById("late-ors-input").value);
-  return ids.map(id => {
+  const mainRooms = ids.map(id => {
     const card     = document.getElementById(`or-card-${id}`);
     const get      = field => card?.querySelector(`[data-field="${field}"]`)?.value?.trim() || null;
     const floor    = OR_TO_FLOOR[id] || null;
@@ -852,18 +974,19 @@ function collectORs() {
     const getCheck = field => !!(card?.querySelector(`[data-field="${field}"]`)?.checked);
     return {
       id,
-      building:        building || "Legacy",
-      floor:           floor    || "Unknown",
+      building:         building || "Legacy",
+      floor:            floor    || "Unknown",
       daytimeAttending: get("attending"),
       daytimeCRNA:      get("crna"),
       daytimeResident:  get("resident"),
-      isLateRunning:   true,
-      flaggedComplex:  getCheck("complex"),
-      flaggedFluoro:   getCheck("fluoro"),
-      estimatedEnd:    get("estimatedEnd"),
-      isNewStart:      getCheck("newstart"),
+      isLateRunning:    true,
+      flaggedComplex:   getCheck("complex"),
+      flaggedFluoro:    getCheck("fluoro"),
+      estimatedEnd:     get("estimatedEnd"),
+      isNewStart:       getCheck("newstart"),
     };
   });
+  return [...mainRooms, ...collectOffsiteORs()];
 }
 
 function collectStaff() {
@@ -880,10 +1003,11 @@ function collectStaff() {
       availablePast5pm: true,
       restrictions:    (g("restrictions")?.value || "").split(",").map(s=>s.trim()).filter(Boolean),
       affinities:      [],
-      daytimeOR:       parseInt(g("daytimeOR")?.value) || null,
-      alreadyDeployed: g("deployed")?.checked || false,
-      isMoonlighter:   g("moonlighter")?.checked || false,
-      departureTarget: g("departureTarget")?.value?.trim() || "",
+      daytimeOR:        parseInt(g("daytimeOR")?.value) || null,
+      alreadyDeployed:  g("deployed")?.checked || false,
+      isMoonlighter:    g("moonlighter")?.checked || false,
+      departureTarget:  g("departureTarget")?.value?.trim() || "",
+      daytimeLocation:  g("daytimeLocation")?.value || "",
     };
   }).filter(Boolean);
 }
@@ -980,11 +1104,13 @@ function importJSON(input) {
       (data.rooms||[]).forEach(r => {
         const id = r.id;
         scheduleRooms[id] = {
-          attending: r.daytimeAttending || r.daytime_attending || null,
-          crna:      r.daytimeCRNA      || r.daytime_crna      || null,
-          resident:  r.daytimeResident  || r.daytime_resident  || null,
+          attending:    r.daytimeAttending || r.daytime_attending || null,
+          crna:         r.daytimeCRNA      || r.daytime_crna      || null,
+          resident:     r.daytimeResident  || r.daytime_resident  || null,
+          locationType: r.locationType || "OR",
         };
       });
+      rebuildOffsiteStaff();
       document.getElementById("schedule-status").innerHTML =
         `<span class="status-pill status-ok">✓ ${Object.keys(scheduleRooms).length} rooms loaded from JSON</span>`;
 
@@ -1193,8 +1319,10 @@ function renderBoard(data) {
   const bodyHTML = [...sorted, ...unRows].map(a => {
     const room = rm[String(a.or_id)] || {};
     const bldg = room.building || "?";
-    const rowClass = !a.attending ? "row-unassigned"
-                   : bldg === "Legacy" ? "row-legacy" : "row-lunder";
+    const rowClass = !a.attending     ? "row-unassigned"
+                   : bldg === "Legacy" ? "row-legacy"
+                   : bldg === "IR" || bldg === "Endo" ? "row-offsite"
+                   : "row-lunder";
     const flags = [
       room.flagged_complex ? `<span class="badge-shift" style="background:#b45309">CPX</span>` : "",
       room.flagged_fluoro  ? `<span class="badge-shift" style="background:#7c3aed">FLU</span>` : "",

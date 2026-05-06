@@ -7,8 +7,8 @@ from typing import List, Tuple
 
 from .models import OperatingRoom, StaffMember
 
-VALID_BUILDINGS = {"Legacy", "Lunder"}
-VALID_FLOORS = {"THOR", "Gray", "Jackson", "L2", "L3", "L4"}
+VALID_BUILDINGS = {"Legacy", "Lunder", "IR", "Endo"}
+VALID_FLOORS = {"THOR", "Gray", "Jackson", "L2", "L3", "L4", "IR", "Endo"}
 VALID_ROLES = {"attending", "CRNA", "resident"}
 VALID_SHIFT_TYPES = {"1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p"}
 VALID_RESIDENT_LEVELS = {"R2", "R3", "R4"}
@@ -16,6 +16,8 @@ VALID_RESIDENT_LEVELS = {"R2", "R3", "R4"}
 BUILDING_FLOOR_MAP = {
     "Legacy": {"THOR", "Gray", "Jackson"},
     "Lunder": {"L2", "L3", "L4"},
+    "IR":     {"IR"},
+    "Endo":   {"Endo"},
 }
 
 
@@ -92,6 +94,10 @@ def _parse_staff(d: dict, idx: int) -> StaffMember:
             f"{label} '{name}': residentLevel must be one of {VALID_RESIDENT_LEVELS}"
         )
 
+    daytime_location = d.get("daytimeLocation", "")
+    if daytime_location not in ("EP", "IR", "Endo", ""):
+        daytime_location = ""
+
     return StaffMember(
         name=name,
         role=role,
@@ -104,4 +110,5 @@ def _parse_staff(d: dict, idx: int) -> StaffMember:
         already_deployed=d.get("alreadyDeployed", False),
         is_moonlighter=bool(d.get("isMoonlighter", False)),
         departure_target=d.get("departureTarget", ""),
+        daytime_location=daytime_location,
     )

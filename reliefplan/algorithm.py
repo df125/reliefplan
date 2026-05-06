@@ -217,6 +217,9 @@ def _find_crna(
         # Prefer 7a-8p (continuity shift) for continuity rooms
         if s.shift_type == "CRNA-7a-8p" and s.daytime_or == room.id:
             sc += 40
+        # EP CRNAs often tied up until 5:15pm — assign last
+        if s.daytime_location == "EP":
+            sc -= 60
         return sc
 
     return max(candidates, key=score)
@@ -519,6 +522,15 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
                         "must be split",
                 or_id=None,
             ))
+        has_ir   = "IR"   in att_st.floors
+        has_endo = "Endo" in att_st.floors
+        has_main_or = bool(att_st.floors - {"IR", "Endo"})
+        if (has_ir or has_endo) and has_main_or:
+            warnings.append(CoverageWarning(
+                severity="error",
+                message=f"VIOLATION: {att.name} is assigned to both offsite and main OR locations.",
+                or_id=None,
+            ))
 
     # 7d: Verify Lunder floor constraint for all supervisors
     for att in attending_pool:
@@ -530,6 +542,58 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
                 message=f"VIOLATION: {att.name} supervises L2 + L4 without L3",
                 or_id=None,
             ))
+
+    # ------------------------------------------------------------------ #
+    # Optional pass: assign surplus attendings to offsite (IR/Endo) rooms  #
+    # ------------------------------------------------------------------ #
+    offsite_rooms = [r for r in late_rooms if r.building in ("IR", "Endo")]
+    if offsite_rooms:
+        free_attendings = sorted(
+            [att for att in attending_pool
+             if att.name not in used_attendings
+             and att_states[att.name].total_supervised == 0
+             and att_states[att.name].solo_room is None],
+            key=_att_solo_order,
+        )
+        for room in offsite_rooms:
+            best_att: Optional[StaffMember] = None
+            best_score = -9999
+            prov_info = physical.get(room.id)
+            prov_type = prov_info[1] if prov_info else None
+
+            for att in free_attendings:
+                att_st = att_states[att.name]
+                if prov_type:
+                    if not att_st.can_supervise(room, prov_type, room.is_new_start):
+                        continue
+                    sc = _supervision_score(att_st, room, prov_type)
+                else:
+                    if not att_st.can_go_solo(room):
+                        continue
+                    sc = _solo_score(att_st, room)
+                if sc > best_score:
+                    best_score = sc
+                    best_att = att
+
+            if best_att:
+                att_st = att_states[best_att.name]
+                if prov_type:
+                    att_st.add_supervised(room, prov_type, room.is_new_start)
+                else:
+                    att_st.set_solo(room)
+                used_attendings.add(best_att.name)
+                free_attendings.remove(best_att)
+            else:
+                unassigned_rooms.append(room.id)
+                loc = room.building
+                warnings.append(CoverageWarning(
+                    severity="info",
+                    message=(
+                        f"{loc} room {room.id}: no surplus attending available — "
+                        f"offsite team will finish their own case."
+                    ),
+                    or_id=room.id,
+                ))
 
     # ------------------------------------------------------------------ #
     # Build output                                                         #
