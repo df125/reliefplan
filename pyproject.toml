@@ -25,3 +25,6 @@ reliefplan = "reliefplan.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["reliefplan*"]
+
+[tool.setuptools.package-data]
+reliefplan = ["static/*"]
