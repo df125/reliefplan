@@ -1247,7 +1247,9 @@ function renderResults(data) {
 
   const section = document.getElementById("results-section");
   section.innerHTML = `
-    <div style="text-align:right;margin-bottom:8px">
+    <div style="text-align:right;margin-bottom:8px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="parse-btn" onclick="runPlan()" id="recalc-btn"
+              style="background:#6366f1">↺ Recalculate</button>
       <button class="parse-btn" onclick="copySummary()" id="copy-summary-btn"
               style="background:#059669">📋 Copy Summary</button>
     </div>
