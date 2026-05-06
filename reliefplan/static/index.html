@@ -274,7 +274,7 @@
     </div>
     <div class="step-body">
       <textarea id="refine-text" class="paste-area" rows="3"
-        placeholder="Describe any changes you'd like to make. For example:&#10;  • Move Jones to OR 63 instead of OR 44&#10;  • Dr. Smith should cover OR 82, not Dr. Johnson&#10;  • Swap the attendings in OR 15 and OR 44&#10;  • Remove the CRNA from OR 71 — attending will cover solo"></textarea>
+        placeholder="Describe any changes you'd like to make. For example:&#10;  • Move Jones to OR 63 instead of OR 44&#10;  • Dr. Smith should cover OR 82, not Dr. Johnson&#10;  • Swap the attendings in OR 15 and OR 44&#10;  • Remove the CRNA from OR 71 — attending will cover solo&#10;  • Rivera agreed to stay late — assign to OR 44&#10;  • OR 63 is no longer running late — remove it&#10;  • OR 25 is also running late now — add it"></textarea>
       <button class="parse-btn" id="refine-btn" onclick="refinePlan()">Apply Changes</button>
       <div id="refine-result"></div>
     </div>
@@ -1085,17 +1085,73 @@ async function refinePlan() {
 
     const data = await resp.json();
 
+    // Apply OR list changes before re-rendering (remove_or edits already in plan)
+    const localApplied = [];
+    const orChanges = data.or_list_changes || [];
+    if (orChanges.length) {
+      const inp = document.getElementById("late-ors-input");
+      let ids = parseLateORNumbers(inp.value);
+      for (const ch of orChanges) {
+        if (ch.operation === "remove_or") {
+          ids = ids.filter(id => id !== ch.or_id);
+          localApplied.push(`OR ${ch.or_id} removed from late list`);
+        } else if (ch.operation === "add_or") {
+          if (!ids.includes(ch.or_id)) ids.push(ch.or_id);
+          localApplied.push(`OR ${ch.or_id} added to late list`);
+        }
+      }
+      inp.value = ids.sort((a, b) => a - b).join(", ");
+      updateLatePreview();
+    }
+
     // Re-render the plan with the updated assignments
     renderResults(data);
 
-    // Show the refine summary and change log below the textarea
+    // Add newly stayed-late staff to the PM staff table
+    if (data.staff_added?.length) {
+      const sm = data.staff_map || {};
+      for (const name of data.staff_added) {
+        const s = sm[name];
+        if (s) addStaffRow({
+          name:            s.name,
+          role:            s.role,
+          shiftType:       s.shift_type,
+          alreadyDeployed: s.already_deployed,
+          daytimeOR:       s.daytime_or || "",
+          isMoonlighter:   s.is_moonlighter,
+          departureTarget: s.departure_target || "",
+          restrictions:    s.restrictions || [],
+        });
+      }
+    }
+
+    // Build the change log
+    const allApplied = [...(data.changes_applied || []), ...localApplied];
     let html = "";
     if (data.refine_summary)
       html += `<div class="refine-summary">${esc(data.refine_summary)}</div>`;
-    if (data.changes_applied?.length)
-      html += `<ul class="change-list applied">${data.changes_applied.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
+    if (allApplied.length)
+      html += `<ul class="change-list applied">${allApplied.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
     if (data.changes_rejected?.length)
       html += `<ul class="change-list rejected">${data.changes_rejected.map(c=>`<li>${esc(c)}</li>`).join("")}</ul>`;
+    if (data.staff_added?.length)
+      html += `<div class="refine-summary" style="background:#d1fae5;border-color:#16a34a;margin-top:6px">
+        ➕ Added to PM staff: ${data.staff_added.map(n => esc(n)).join(", ")}
+      </div>`;
+    if (orChanges.some(c => c.operation === "add_or"))
+      html += `<div class="refine-summary" style="background:#fef9c3;border-color:#ca8a04;margin-top:6px">
+        ⚠ OR list changed — re-generate the plan to assign coverage for new rooms.
+      </div>`;
+
+    // Debug report button when there are gaps or rejections
+    const hasGaps = (data.changes_rejected?.length || data.unhandled_requests?.length);
+    if (hasGaps) {
+      if (!window.__debugReports) window.__debugReports = {};
+      const key = `r${Date.now()}`;
+      window.__debugReports[key] = buildDebugReport(feedback, data, collectORs(), collectStaff());
+      html += `<button class="parse-btn" style="background:#6b7280;margin-top:8px"
+        onclick="downloadDebugReport('${key}')">⬇ Download Debug Report</button>`;
+    }
 
     resultEl.innerHTML = html;
     statusEl.innerHTML = "";
@@ -1224,6 +1280,42 @@ function renderRelief(data) {
       <tbody>${bodyHTML}</tbody>
     </table></div>
   </div>`;
+}
+
+/* =====================================================================
+   Debug report helpers
+===================================================================== */
+function buildDebugReport(userRequest, data, rooms, staff) {
+  return {
+    schema_version: 1,
+    timestamp: new Date().toISOString(),
+    session_type: "refine_plan_debug",
+    user_request: userRequest,
+    llm_summary: data.refine_summary || "",
+    changes_applied:    data.changes_applied    || [],
+    changes_rejected:   data.changes_rejected   || [],
+    unhandled_requests: data.unhandled_requests || [],
+    plan_snapshot: {
+      assignments:      data.assignments      || [],
+      unassigned_rooms: data.unassigned_rooms || [],
+    },
+    staff_snapshot: staff,
+    rooms_snapshot: rooms,
+    instructions_for_claude_code:
+      "Generated by MGH Anesthesia 5PM Coverage Planner — Refine Plan step. " +
+      "Review unhandled_requests[].suggested_feature and changes_rejected[] to " +
+      "identify missing features or bugs, then implement and commit.",
+  };
+}
+
+function downloadDebugReport(reportKey) {
+  const report = window.__debugReports?.[reportKey];
+  if (!report) return;
+  const blob = new Blob([JSON.stringify(report, null, 2)], {type: "application/json"});
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  Object.assign(document.createElement("a"),
+    {href: URL.createObjectURL(blob), download: `refine-debug-${ts}.json`}
+  ).click();
 }
 
 /* =====================================================================

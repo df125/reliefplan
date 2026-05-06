@@ -291,8 +291,67 @@ _REFINE_TOOL: dict[str, Any] = {
                     "required": ["name", "add", "remove"],
                 },
             },
+            "staff_additions": {
+                "type": "array",
+                "description": (
+                    "Populate when the user says a daytime provider agreed to stay late. "
+                    "Use the EXACT full name from the daytime providers list. Leave empty otherwise."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name":       {"type": "string"},
+                        "role":       {"type": "string", "enum": ["attending", "CRNA", "resident"]},
+                        "shiftType":  {
+                            "type": "string",
+                            "enum": ["1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p"],
+                            "description": "Use '7a-7p' for a daytime attending staying late.",
+                        },
+                        "daytime_or": {
+                            "type": "integer",
+                            "description": "OR number the provider covered during the day.",
+                        },
+                    },
+                    "required": ["name", "role", "shiftType"],
+                },
+            },
+            "or_list_changes": {
+                "type": "array",
+                "description": (
+                    "Use when the user adds or removes an OR from the late-running list. "
+                    "For remove_or, also emit a remove_attending edit in edits[] to keep the plan consistent."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {"type": "string", "enum": ["add_or", "remove_or"]},
+                        "or_id":     {"type": "integer"},
+                    },
+                    "required": ["operation", "or_id"],
+                },
+            },
+            "unhandled_requests": {
+                "type": "array",
+                "description": (
+                    "Populate when the user asks for something you cannot express as any current operation "
+                    "(e.g. queries, analytics, bulk swaps with no clear target). "
+                    "Describe what was requested and why it is not currently supported."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "original_text":     {"type": "string",
+                                              "description": "Verbatim excerpt from the user request."},
+                        "reason":            {"type": "string",
+                                              "description": "Why this cannot be handled currently."},
+                        "suggested_feature": {"type": "string",
+                                              "description": "One-sentence feature description for a developer."},
+                    },
+                    "required": ["original_text", "reason", "suggested_feature"],
+                },
+            },
         },
-        "required": ["edits", "summary", "affinity_updates"],
+        "required": ["edits", "summary", "affinity_updates", "staff_additions", "or_list_changes", "unhandled_requests"],
     },
 }
 
@@ -546,6 +605,21 @@ async def parse_refinement(
         flag_str = f" [{', '.join(flags)}]" if flags else ""
         room_lines.append(f"  OR {r['id']}: {r.get('building','')} / {r.get('floor','')}{flag_str}")
 
+    daytime_lines = ["Daytime providers by OR (not on PM staff — candidates if user says they agreed to stay):"]
+    for r in rooms:
+        dt_att  = r.get("daytimeAttending")  or r.get("daytime_attending")  or ""
+        dt_crna = r.get("daytimeCRNA")        or r.get("daytime_crna")        or ""
+        dt_res  = r.get("daytimeResident")   or r.get("daytime_resident")   or ""
+        parts = (
+            ([f"attending={dt_att}"]  if dt_att  else []) +
+            ([f"CRNA={dt_crna}"]      if dt_crna else []) +
+            ([f"resident={dt_res}"]   if dt_res  else [])
+        )
+        if parts:
+            daytime_lines.append(f"  OR {r.get('id','?')}: {', '.join(parts)}")
+    if len(daytime_lines) == 1:
+        daytime_lines.append("  (none)")
+
     system = "\n".join([
         "You are a scheduling assistant for the MGH Anesthesia 5PM Coverage Planner.",
         "The user wants to adjust the current after-5pm assignment plan.",
@@ -556,13 +630,26 @@ async def parse_refinement(
         "  • Staff with 'no-fluoro' restriction cannot go into a fluoro-flagged OR.",
         "  • R2 residents may only go in complex-flagged ORs.",
         "  • A CRNA or resident must have an attending assigned to their OR.",
-        "  • Use exact names from the staff list — do not invent names.",
+        "  • Use exact names from the PM staff list or daytime providers list — do not invent names.",
+        "  • If the user gives only a last name, match it against PM staff or daytime providers below.",
+        "    Use the full name when a unique match is found.",
+        "  • If a daytime provider agreed to stay, add them to staff_additions with their exact",
+        "    full name; do NOT mark that assignment edit as rejected.",
+        "  • If the user says an OR is no longer running late, emit remove_or in or_list_changes",
+        "    AND emit remove_attending for that OR in edits.",
+        "  • If the user says a new OR is running late, emit add_or in or_list_changes.",
+        "    Do not invent an attending assignment — the coordinator will fill in providers.",
+        "  • If any part of the user's request cannot be expressed as a supported operation,",
+        "    record it in unhandled_requests with a clear suggested_feature for a developer.",
+        "    Do NOT silently drop unrecognised intent.",
         "",
         "\n".join(plan_lines),
         "",
         "\n".join(staff_lines),
         "",
         "\n".join(room_lines),
+        "",
+        "\n".join(daytime_lines),
     ])
 
     client = _client()
@@ -587,9 +674,12 @@ async def parse_refinement(
         })
 
     return {
-        "edits": edits,
-        "summary": args.get("summary", ""),
-        "affinity_updates": args.get("affinity_updates", []),
+        "edits":              edits,
+        "summary":            args.get("summary", ""),
+        "affinity_updates":   args.get("affinity_updates", []),
+        "staff_additions":    args.get("staff_additions", []),
+        "or_list_changes":    args.get("or_list_changes", []),
+        "unhandled_requests": args.get("unhandled_requests", []),
     }
 
 

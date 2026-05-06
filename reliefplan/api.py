@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .affinities import load_affinities, merge_affinities, save_affinities
 from .algorithm import plan as run_plan
-from .loader import _parse_room, _parse_staff
+from .loader import _parse_room, _parse_staff, VALID_SHIFT_TYPES
 from .parser import parse_or_schedule, parse_situation, parse_staff_list, parse_refinement
 from .refine import apply_edits
 
@@ -78,6 +78,32 @@ async def api_refine(request: Request) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Refinement error: {exc}")
 
+    # Promote stay-late daytime providers into the PM staff list
+    added_staff_names: list[str] = []
+    for sa in refine_result.get("staff_additions", []):
+        sa_name = (sa.get("name") or "").strip()
+        if not sa_name or any(s.name == sa_name for s in staff):
+            continue
+        daytime_or = sa.get("daytime_or") or next(
+            (r.id for r in rooms if r.daytime_attending == sa_name), None
+        )
+        shift = sa.get("shiftType") or "7a-7p"
+        if shift not in VALID_SHIFT_TYPES:
+            shift = "7a-7p"
+        staff_dict = {
+            "name": sa_name, "role": sa.get("role") or "attending",
+            "shiftType": shift, "availablePast5pm": True,
+            "restrictions": [], "affinities": [],
+            "daytimeOR": daytime_or, "alreadyDeployed": True,
+            "isMoonlighter": False, "departureTarget": "",
+        }
+        try:
+            staff.append(_parse_staff(staff_dict, len(staff)))
+            staff_raw.append(staff_dict)
+            added_staff_names.append(sa_name)
+        except ValueError:
+            pass
+
     updated_plan, applied, rejected = apply_edits(
         current_plan, refine_result["edits"], rooms, staff
     )
@@ -93,12 +119,15 @@ async def api_refine(request: Request) -> dict[str, Any]:
 
     return {
         **updated_plan,
-        "room_map":         {str(r.id): dataclasses.asdict(r) for r in rooms},
-        "staff_map":        {s.name: dataclasses.asdict(s) for s in staff},
-        "refine_summary":   refine_result["summary"],
-        "changes_applied":  applied,
-        "changes_rejected": rejected,
-        "affinities_saved": affinities_saved,
+        "room_map":           {str(r.id): dataclasses.asdict(r) for r in rooms},
+        "staff_map":          {s.name: dataclasses.asdict(s) for s in staff},
+        "refine_summary":     refine_result["summary"],
+        "changes_applied":    applied,
+        "changes_rejected":   rejected,
+        "affinities_saved":   affinities_saved,
+        "staff_added":        added_staff_names,
+        "or_list_changes":    refine_result.get("or_list_changes", []),
+        "unhandled_requests": refine_result.get("unhandled_requests", []),
     }
 
 
