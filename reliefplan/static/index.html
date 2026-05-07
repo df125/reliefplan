@@ -294,8 +294,8 @@
           <span style="font-size:.83rem;color:#374151">Current room:</span>
           <input id="tx-call-room" type="number" min="1" max="99" placeholder="OR #"
                  style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.83rem"
-                 oninput="scheduleSave()">
-          <button onclick="document.getElementById('tx-call-room').value='';scheduleSave()"
+                 oninput="document.getElementById('tx-no-room').style.cssText='font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151';scheduleSave()">
+          <button id="tx-no-room" onclick="setTxNoRoom()"
                   style="font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151">
             Not in a room
           </button>
@@ -1782,7 +1782,17 @@ function setTxCall(available) {
     roomRow.style.display = "none";
     const inp = document.getElementById("tx-call-room");
     if (inp) inp.value = "";
+    const noRoomBtn = document.getElementById("tx-no-room");
+    if (noRoomBtn) noRoomBtn.style.cssText = "font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151";
   }
+  scheduleSave();
+}
+
+function setTxNoRoom() {
+  const inp = document.getElementById("tx-call-room");
+  const btn = document.getElementById("tx-no-room");
+  if (inp) inp.value = "";
+  if (btn) btn.style.cssText = "font-size:.8rem;padding:3px 10px;border:1px solid #6b7280;border-radius:4px;background:#6b7280;cursor:pointer;color:#fff;font-weight:600";
   scheduleSave();
 }
 
