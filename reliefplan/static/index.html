@@ -1653,17 +1653,38 @@ async function processSituation() {
       if (el) { el.value = sw.name; applied.push(`OR ${sw.or_id}: ${sw.role} set to ${sw.name}`); }
     }
 
-    // Add new staff members
+    // Add new staff members — or update existing row if name already present
     for (const sa of (data.staff_additions || [])) {
-      addStaffRow({
-        name:            sa.name,
-        role:            sa.role || "attending",
-        shiftType:       sa.shiftType || "1-A",
-        isMoonlighter:   sa.isMoonlighter || false,
-        departureTarget: sa.departureTarget || "",
-        alreadyDeployed: sa.alreadyDeployed || false,
+      const existingRow = Array.from(
+        document.querySelectorAll("#staff-tbody tr")
+      ).find(r => {
+        const n = r.querySelector("[data-field='name']");
+        return n && n.value.trim().toLowerCase() === sa.name.trim().toLowerCase();
       });
-      applied.push(`Added staff: ${sa.name} (${sa.role}${sa.isMoonlighter ? ", moonlighter" : ""})`);
+
+      if (existingRow) {
+        // Update deployment info on the existing row rather than duplicating
+        if (sa.daytimeOR) {
+          const el = existingRow.querySelector("[data-field='daytimeOR']");
+          if (el) el.value = sa.daytimeOR;
+        }
+        if (sa.alreadyDeployed) {
+          const el = existingRow.querySelector("[data-field='deployed']");
+          if (el) el.checked = true;
+        }
+        applied.push(`Updated ${sa.name}: daytimeOR=${sa.daytimeOR || "—"}, deployed=${sa.alreadyDeployed ? "yes" : "no"}`);
+      } else {
+        addStaffRow({
+          name:            sa.name,
+          role:            sa.role || "attending",
+          shiftType:       sa.shiftType || "1-A",
+          isMoonlighter:   sa.isMoonlighter || false,
+          departureTarget: sa.departureTarget || "",
+          alreadyDeployed: sa.alreadyDeployed || false,
+          daytimeOR:       sa.daytimeOR || null,
+        });
+        applied.push(`Added staff: ${sa.name} (${sa.role}${sa.isMoonlighter ? ", moonlighter" : ""})`);
+      }
     }
 
     scheduleSave();

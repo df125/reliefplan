@@ -196,7 +196,13 @@ _SITUATION_TOOL: dict[str, Any] = {
             },
             "staff_additions": {
                 "type": "array",
-                "description": "New PM staff members not previously on the list.",
+                "description": (
+                    "Use for two cases: (1) new PM staff not previously on the list "
+                    "(moonlighters, stay-late daytime attendings); (2) an existing PM staff member "
+                    "whose daytimeOR or alreadyDeployed status needs to be updated — e.g. 'White-Dzuro "
+                    "has been in OR 90 since 3pm'. In case 2, include their existing name exactly and "
+                    "the system will update their row rather than add a duplicate."
+                ),
                 "items": {
                     "type": "object",
                     "properties": {
@@ -204,9 +210,13 @@ _SITUATION_TOOL: dict[str, Any] = {
                         "role":            {"type": "string", "enum": ["attending", "CRNA", "resident"]},
                         "shiftType":       {
                             "type": "string",
-                            "enum": ["1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p"],
+                            "enum": ["1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p", "moonlighter"],
                         },
                         "isMoonlighter":   {"type": "boolean"},
+                        "daytimeOR":       {
+                            "type": "integer",
+                            "description": "OR number the provider is currently in or covered during the day.",
+                        },
                         "departureTarget": {"type": "string", "description": "e.g. '22:00'"},
                         "alreadyDeployed": {"type": "boolean"},
                     },
@@ -736,9 +746,15 @@ Guidelines:
   a case is bumped to another room). Copy daytime attending/crna/resident fields.
 - or_staff_swaps: a specific role in an OR changed (e.g. "attending in OR 12 is now Dr. Jones").
 - room_flag_updates: OR complexity/fluoro flags changed, or estimated end time was stated.
-- staff_additions: new PM staff not previously on the list (moonlighters, stay-late attendings).
-  Set isMoonlighter=true if the person is described as "moonlighter", "moonlighting", or similar.
-  Set departureTarget to a 24h time string if a specific departure time is mentioned.
+- staff_additions: covers two cases:
+    (a) Truly new PM staff (moonlighters, stay-late daytime attendings not yet on the list).
+        Set isMoonlighter=true if described as "moonlighter" or "moonlighting".
+        Set departureTarget to a 24h time string if a specific departure time is mentioned.
+    (b) An EXISTING PM staff member whose deployment to an OR is being reported (e.g. "White-Dzuro
+        has been in OR 90 since 3pm" when White-Dzuro is already on the PM list). In this case,
+        include them in staff_additions with their exact current name, alreadyDeployed=true, and
+        daytimeOR set to the OR number. Also emit an or_staff_swap for that OR to update the OR card.
+        Do NOT invent a new row — the system will detect the existing name and update it in place.
 - Return empty arrays for categories that have no changes.
 - summary: one or two sentences confirming what you understood."""
 
