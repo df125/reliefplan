@@ -434,11 +434,17 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # ------------------------------------------------------------------ #
     late_or_ids: Set[int] = {r.id for r in late_rooms}
 
-    # Sort so continuity rooms (daytime CRNA available by name OR daytime_or match) are first
+    # Sort so continuity rooms (daytime CRNA available by name OR daytime_or match) are first.
+    # Locked-attending rooms (already-deployed attendings with a continuity OR) get top priority
+    # so they receive a CRNA before the pool is consumed by other rooms.
     crna_or_map: Dict[int, str] = {s.daytime_or: s.name for s in crna_pool if s.daytime_or}
+    locked_att_rooms: Set[int] = {
+        s.daytime_or for s in attending_pool if s.already_deployed and s.daytime_or
+    }
     rooms_sorted_crna = sorted(
         late_rooms,
         key=lambda r: (
+            0 if r.id in locked_att_rooms else 1,
             0 if (r.daytime_crna and r.daytime_crna in staff_names)
               or r.id in crna_or_map else 1,
             0 if r.flagged_complex else 1,
