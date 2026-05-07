@@ -194,6 +194,119 @@ def _solo_score(att: _AttState, room: OperatingRoom) -> int:
     return score
 
 
+def _swap_improvement_pass(
+    att_states: Dict[str, _AttState],
+    physical: Dict[int, Tuple[str, str, bool]],
+    rooms_by_id: Dict[int, OperatingRoom],
+) -> int:
+    """
+    Greedy best-improvement swap pass over all supervised-room pairs.
+    Finds the single swap that most improves the total score, applies it,
+    then repeats until no further improvement exists.
+    Returns the number of swaps made.
+    """
+
+    def _hyp(att: _AttState, remove_id: int, add_room: OperatingRoom, add_ptype: str) -> _AttState:
+        """Clone att_state with remove_id replaced by add_room."""
+        hyp = _AttState(staff=att.staff)
+        hyp.supervised_rooms = [r for r in att.supervised_rooms if r != remove_id]
+        hyp.supervised_types = [
+            t for r, t in zip(att.supervised_rooms, att.supervised_types) if r != remove_id
+        ]
+        hyp.supervised_rooms.append(add_room.id)
+        hyp.supervised_types.append(add_ptype)
+        hyp.solo_room = att.solo_room
+        if hyp.supervised_rooms:
+            hyp.building = rooms_by_id[hyp.supervised_rooms[0]].building
+            hyp.floors = {rooms_by_id[r].floor for r in hyp.supervised_rooms}
+            hyp.new_start_count = sum(
+                1 for r in hyp.supervised_rooms if rooms_by_id[r].is_new_start
+            )
+        return hyp
+
+    def _feasible(a1: _AttState, r1_id: int, a2: _AttState, r2_id: int) -> bool:
+        r1, r2 = rooms_by_id[r1_id], rooms_by_id[r2_id]
+        r1_pt, r2_pt = physical[r1_id][1], physical[r2_id][1]
+        h1 = _hyp(a1, r1_id, r2, r2_pt)
+        h2 = _hyp(a2, r2_id, r1, r1_pt)
+        for h in (h1, h2):
+            bldgs = {rooms_by_id[r].building for r in h.supervised_rooms}
+            if len(bldgs) > 1:
+                return False
+            if not floors_compatible(h.floors & {"L2", "L3", "L4"}):
+                return False
+            res = h.supervised_types.count("resident")
+            tot = len(h.supervised_rooms)
+            if res > 0 and tot > 2:
+                return False
+            if res == 0 and tot > 4:
+                return False
+            if h.new_start_count > 1:
+                return False
+            # IR/Endo isolation
+            has_off = any(rooms_by_id[r].building in ("IR", "Endo") for r in h.supervised_rooms)
+            has_main = any(rooms_by_id[r].building not in ("IR", "Endo") for r in h.supervised_rooms)
+            if has_off and has_main:
+                return False
+        if r2.flagged_fluoro and "no-fluoro" in a1.staff.restrictions:
+            return False
+        if r1.flagged_fluoro and "no-fluoro" in a2.staff.restrictions:
+            return False
+        return True
+
+    total_swaps = 0
+    for _pass in range(20):  # safety cap
+        # Build current assignment list
+        assignments: List[Tuple[str, int]] = [
+            (name, rid)
+            for name, st in att_states.items()
+            for rid in st.supervised_rooms
+        ]
+        best_gain, best_pair = 0, None
+        for i in range(len(assignments)):
+            for j in range(i + 1, len(assignments)):
+                a1n, r1_id = assignments[i]
+                a2n, r2_id = assignments[j]
+                if a1n == a2n:
+                    continue
+                a1, a2 = att_states[a1n], att_states[a2n]
+                if not _feasible(a1, r1_id, a2, r2_id):
+                    continue
+                r1, r2 = rooms_by_id[r1_id], rooms_by_id[r2_id]
+                r1_pt, r2_pt = physical[r1_id][1], physical[r2_id][1]
+                h1 = _hyp(a1, r1_id, r2, r2_pt)
+                h2 = _hyp(a2, r2_id, r1, r1_pt)
+                gain = (
+                    _supervision_score(h1, r2, r2_pt) + _supervision_score(h2, r1, r1_pt)
+                    - _supervision_score(a1, r1, r1_pt) - _supervision_score(a2, r2, r2_pt)
+                )
+                if gain > best_gain:
+                    best_gain, best_pair = gain, (a1n, r1_id, a2n, r2_id)
+
+        if best_pair is None:
+            break
+        a1n, r1_id, a2n, r2_id = best_pair
+        a1, a2 = att_states[a1n], att_states[a2n]
+        r1, r2 = rooms_by_id[r1_id], rooms_by_id[r2_id]
+        r1_pt, r2_pt = physical[r1_id][1], physical[r2_id][1]
+        # Apply
+        idx1 = a1.supervised_rooms.index(r1_id)
+        idx2 = a2.supervised_rooms.index(r2_id)
+        a1.supervised_rooms[idx1] = r2_id
+        a1.supervised_types[idx1] = r2_pt
+        a2.supervised_rooms[idx2] = r1_id
+        a2.supervised_types[idx2] = r1_pt
+        a1.building = rooms_by_id[a1.supervised_rooms[0]].building
+        a1.floors = {rooms_by_id[r].floor for r in a1.supervised_rooms}
+        a1.new_start_count = sum(1 for r in a1.supervised_rooms if rooms_by_id[r].is_new_start)
+        a2.building = rooms_by_id[a2.supervised_rooms[0]].building
+        a2.floors = {rooms_by_id[r].floor for r in a2.supervised_rooms}
+        a2.new_start_count = sum(1 for r in a2.supervised_rooms if rooms_by_id[r].is_new_start)
+        total_swaps += 1
+
+    return total_swaps
+
+
 # ---------------------------------------------------------------------------
 # Physical-provider helpers
 # ---------------------------------------------------------------------------
@@ -681,6 +794,18 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
                     ),
                     or_id=room.id,
                 ))
+
+    # ------------------------------------------------------------------ #
+    # Step 8 – Swap improvement pass                                       #
+    # ------------------------------------------------------------------ #
+    rooms_by_id: Dict[int, OperatingRoom] = {r.id: r for r in late_rooms}
+    n_swaps = _swap_improvement_pass(att_states, physical, rooms_by_id)
+    if n_swaps:
+        warnings.append(CoverageWarning(
+            severity="info",
+            message=f"Optimizer made {n_swaps} swap{'s' if n_swaps != 1 else ''} to improve load balance and affinity.",
+            or_id=None,
+        ))
 
     # ------------------------------------------------------------------ #
     # Build output                                                         #

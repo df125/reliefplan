@@ -766,7 +766,7 @@ async function parseScheduleNow() {
   btn.disabled = false;
   btn.textContent = "Re-parse";
   if (count > 0) { scheduleReady = true; checkStepLocks(); }
-  updateLatePreview();
+  updateLatePreview();   // also calls autopopulateDaytimeORs internally
   saveSession();
 }
 
@@ -778,6 +778,55 @@ function parseLateORNumbers(text) {
   return [...new Set(nums)].filter(n => n >= 1 && n <= 99);
 }
 
+/* =====================================================================
+   Auto-populate daytimeOR for PM staff from parsed schedule
+   Runs after late ORs are known; only fills empty fields (idempotent).
+===================================================================== */
+function normaliseLastName(name) {
+  // "Bergman, Eric" → "bergman"   "White-Dzuro" → "white-dzuro"
+  return name.split(",")[0].trim().toLowerCase();
+}
+
+function autopopulateDaytimeORs() {
+  const lateIds = new Set(parseLateORNumbers(document.getElementById("late-ors-input")?.value || ""));
+  if (!lateIds.size || !Object.keys(scheduleRooms).length) return;
+
+  // Build: role → lastName → [{or_id, fullName}]
+  const byRole = {};
+  for (const [key, room] of Object.entries(scheduleRooms)) {
+    const orId = parseInt(key, 10);
+    if (isNaN(orId) || !lateIds.has(orId)) continue;
+    for (const [field, role] of [["attending","attending"],["crna","CRNA"],["resident","resident"]]) {
+      const fullName = room[field];
+      if (!fullName) continue;
+      const last = normaliseLastName(fullName);
+      if (!byRole[role]) byRole[role] = {};
+      if (!byRole[role][last]) byRole[role][last] = [];
+      byRole[role][last].push({ or_id: orId, fullName });
+    }
+  }
+
+  document.querySelectorAll("#staff-tbody tr").forEach(row => {
+    const nameEl    = row.querySelector("[data-field='name']");
+    const orEl      = row.querySelector("[data-field='daytimeOR']");
+    const roleEl    = row.querySelector("[data-field='role']");
+    if (!nameEl || !orEl || !roleEl) return;
+    if (orEl.value.trim()) return; // already set — never overwrite manual entry
+
+    const staffName = nameEl.value.trim();
+    if (!staffName) return;
+
+    // Map "moonlighter" role → "attending" for lookup
+    const role = roleEl.value === "moonlighter" ? "attending" : roleEl.value;
+    const last = normaliseLastName(staffName);
+    const candidates = byRole[role]?.[last] || [];
+    if (candidates.length === 1) {
+      orEl.value = candidates[0].or_id;
+    }
+    // If ambiguous (>1 match), leave blank — don't guess
+  });
+}
+
 function updateLatePreview() {
   const raw = document.getElementById("late-ors-input").value;
   const ids = parseLateORNumbers(raw);
@@ -786,6 +835,7 @@ function updateLatePreview() {
   if (!ids.length) { container.innerHTML = ""; updateLateORCount(); scheduleSave(); return; }
 
   container.innerHTML = ids.map(id => renderORCard(id)).join("");
+  autopopulateDaytimeORs();
   updateLateORCount();
   scheduleSave();
 }
@@ -973,6 +1023,7 @@ async function parseStaffNow() {
   btn.textContent = "Re-parse";
   renderStaffTable(staff);
   if (staff.length > 0) { staffReady = true; checkStepLocks(); }
+  autopopulateDaytimeORs();
   saveSession();
 }
 
