@@ -479,6 +479,47 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             physical[room.id] = (resident.name, "resident", is_cont)
             used_providers.add(resident.name)
 
+    # ------------------------------------------------------------------ #
+    # Step 3.5 – Upgrade locked-attending rooms from resident to CRNA    #
+    # ------------------------------------------------------------------ #
+    # If a locked attending's continuity room ended up with a resident
+    # (because Step 2 consumed all CRNAs elsewhere before reaching this room),
+    # but a same-floor room has a non-continuity CRNA, swap them.
+    # This enables the attending to supervise a CRNA cluster on their floor
+    # instead of being capped at 2 rooms by the resident ratio rule.
+    rooms_by_id: Dict[int, OperatingRoom] = {r.id: r for r in late_rooms}
+    for att in attending_pool:
+        if not att.already_deployed or att.daytime_or is None:
+            continue
+        locked_id = att.daytime_or
+        if locked_id not in physical or physical[locked_id][1] != "resident":
+            continue
+        locked_room = rooms_by_id.get(locked_id)
+        if not locked_room:
+            continue
+        # Find same-floor rooms with non-continuity CRNAs (safe to swap)
+        swap_candidates = [
+            (rid, crna_name)
+            for rid, (crna_name, ptype, is_cont) in physical.items()
+            if ptype == "CRNA"
+            and not is_cont
+            and rooms_by_id.get(rid) is not None
+            and rooms_by_id[rid].floor == locked_room.floor
+            and rid != locked_id
+        ]
+        for swap_room_id, crna_name in swap_candidates:
+            swap_room = rooms_by_id[swap_room_id]
+            crna_member = next((s for s in crna_pool if s.name == crna_name), None)
+            resident_name = physical[locked_id][0]
+            resident_member = next((s for s in resident_pool if s.name == resident_name), None)
+            if crna_member and locked_room.flagged_fluoro and "no-fluoro" in crna_member.restrictions:
+                continue
+            if resident_member and swap_room.flagged_fluoro and "no-fluoro" in resident_member.restrictions:
+                continue
+            physical[locked_id] = (crna_name, "CRNA", crna_name == locked_room.daytime_crna)
+            physical[swap_room_id] = (resident_name, "resident", resident_name == swap_room.daytime_resident)
+            break
+
     # Warn about rooms still lacking a physical provider (will need solo attending)
     rooms_needing_solo: List[OperatingRoom] = []
     for room in late_rooms:
@@ -542,11 +583,6 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
         if room is None:
             continue
         prov_name, prov_type, _ = physical[room.id]
-        # Daytime residents leave at 5pm, so there is no continuity obligation for resident rooms.
-        # Skip the hard pre-assignment and let the main pass handle it via the +60 score bonus.
-        # This frees the attending to cluster on CRNA rooms before consuming a resident cap slot.
-        if prov_type == "resident":
-            continue
         att_st = att_states[att.name]
         if att_st.can_supervise(room, prov_type, room.is_new_start):
             att_st.add_supervised(room, prov_type, room.is_new_start)
