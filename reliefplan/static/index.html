@@ -1355,11 +1355,13 @@ function renderResults(data) {
 
   const section = document.getElementById("results-section");
   section.innerHTML = `
-    <div style="text-align:right;margin-bottom:8px;display:flex;gap:8px;justify-content:flex-end">
+    <div style="text-align:right;margin-bottom:8px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
       <button class="parse-btn" onclick="runPlan()" id="recalc-btn"
               style="background:#6366f1">↺ Recalculate</button>
       <button class="parse-btn" onclick="copySummary()" id="copy-summary-btn"
               style="background:#059669">📋 Copy Summary</button>
+      <button class="parse-btn" onclick="downloadQIReport()"
+              style="background:#b45309">⬇ Download QI Report</button>
     </div>
     ${renderBanner(totalAssigned, totalRooms, errors.length, warnings.length)}
     ${renderBoard(data)}
@@ -1654,6 +1656,111 @@ function downloadDebugReport(reportKey) {
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   Object.assign(document.createElement("a"),
     {href: URL.createObjectURL(blob), download: `refine-debug-${ts}.json`}
+  ).click();
+}
+
+/* =====================================================================
+   QI Report — full session snapshot for post-hoc debugging
+===================================================================== */
+function buildQIReport() {
+  const g = id => document.getElementById(id);
+  const txAvail = g("tx-call-room-row")?.style.display !== "none";
+
+  // Collect situation update history from DOM (shown result, if any)
+  const situationText = g("situation-text")?.value?.trim() || "";
+  const situationResult = g("situation-result")?.innerText?.trim() || "";
+
+  // Assemble every OR card's current state (not just collectORs() which omits closed cards)
+  const orCards = [];
+  document.querySelectorAll("[id^='or-card-']").forEach(card => {
+    const idStr = card.id.replace("or-card-", "");
+    const id = parseInt(idStr, 10);
+    if (isNaN(id)) return;
+    const fv = f => card.querySelector(`[data-field="${f}"]`)?.value?.trim() || null;
+    const fc = f => card.querySelector(`[data-field="${f}"]`)?.checked || false;
+    orCards.push({
+      id,
+      daytimeAttending: fv("attending"),
+      daytimeCRNA:      fv("crna"),
+      daytimeResident:  fv("resident"),
+      estimatedEnd:     fv("estimatedEnd"),
+      flaggedComplex:   fc("complex"),
+      flaggedFluoro:    fc("fluoro"),
+      isNewStart:       fc("newstart"),
+      confidence:       orConfidence[id] || "watching",
+    });
+  });
+
+  const plan = currentPlanData;
+  const textSummary = plan ? buildTextSummary(plan) : "";
+
+  return {
+    schema_version:   2,
+    report_type:      "qi_session",
+    generated_at:     new Date().toISOString(),
+    app_version:      document.title || "MGH Anesthesia Coverage Planner",
+
+    // ── Raw user inputs ──────────────────────────────────────────────
+    inputs: {
+      schedule_paste:    g("schedule-paste")?.value?.trim() || "",
+      staff_paste:       g("staff-paste")?.value?.trim()    || "",
+      late_ors_raw:      g("late-ors-input")?.value?.trim() || "",
+      ir_count:          parseInt(g("ir-count")?.value)     || 0,
+      endo_count:        parseInt(g("endo-count")?.value)   || 0,
+      tx_call_resident: {
+        available:       txAvail,
+        current_or:      txAvail ? (parseInt(g("tx-call-room")?.value) || null) : null,
+      },
+      situation_update:  situationText,
+    },
+
+    // ── Structured data as seen by the algorithm ─────────────────────
+    structured_inputs: {
+      schedule_rooms:  scheduleRooms,
+      or_cards:        orCards,
+      pm_staff:        collectStaff(),
+    },
+
+    // ── Algorithm output ─────────────────────────────────────────────
+    plan_output: plan ? {
+      assignments:       plan.assignments       || [],
+      unassigned_rooms:  plan.unassigned_rooms  || [],
+      no_physical_rooms: plan.no_physical_rooms || [],
+      supervisor_groups: plan.supervisor_groups || {},
+      warnings:          plan.warnings          || [],
+      room_map:          plan.room_map          || {},
+      staff_map:         plan.staff_map         || {},
+    } : null,
+
+    // ── Human-readable plan text ─────────────────────────────────────
+    plan_text_summary: textSummary,
+
+    // ── Situation update result (if processed) ───────────────────────
+    situation_result_text: situationResult,
+
+    // ── Instructions for Claude Code ─────────────────────────────────
+    instructions_for_claude_code: [
+      "This is a QI (Quality Improvement) session report from the MGH Anesthesia 5PM Coverage Planner.",
+      "It contains everything the coordinator entered and everything the tool produced.",
+      "Use it to:",
+      "  1. Reproduce the exact scenario for debugging algorithm or UI issues.",
+      "  2. Review warnings[] for constraint violations or coverage gaps.",
+      "  3. Check unassigned_rooms[] — any room there means no attending was found.",
+      "  4. Cross-reference pm_staff daytimeOR fields against or_cards to verify continuity.",
+      "  5. The schedule_rooms map keys are OR IDs (strings); locationType flags EP/IR/Endo rooms.",
+      "  6. If the plan looks wrong, describe the expected vs actual assignment so the developer can trace the scoring.",
+      "Repository: df125/reliefplan, branch: claude/anesthesia-coverage-models-czDG4",
+    ].join("\n"),
+  };
+}
+
+function downloadQIReport() {
+  if (!currentPlanData) { alert("Generate a plan first, then download the QI report."); return; }
+  const report = buildQIReport();
+  const blob = new Blob([JSON.stringify(report, null, 2)], {type: "application/json"});
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  Object.assign(document.createElement("a"),
+    {href: URL.createObjectURL(blob), download: `coverage-qi-${ts}.json`}
   ).click();
 }
 
