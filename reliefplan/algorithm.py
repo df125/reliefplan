@@ -542,6 +542,11 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
         if room is None:
             continue
         prov_name, prov_type, _ = physical[room.id]
+        # Daytime residents leave at 5pm, so there is no continuity obligation for resident rooms.
+        # Skip the hard pre-assignment and let the main pass handle it via the +60 score bonus.
+        # This frees the attending to cluster on CRNA rooms before consuming a resident cap slot.
+        if prov_type == "resident":
+            continue
         att_st = att_states[att.name]
         if att_st.can_supervise(room, prov_type, room.is_new_start):
             att_st.add_supervised(room, prov_type, room.is_new_start)
