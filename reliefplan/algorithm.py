@@ -150,17 +150,21 @@ def _supervision_score(att: _AttState, room: OperatingRoom, physical_type: str) 
     if room.building in att.staff.affinities:
         score += 10
 
-    # Prefer 3p-10p for heavy supervision; keep 1-A light (ideal is 1:1 for R1 reserve)
+    # Load balancing: penalise each additional room supervised so that underloaded attendings
+    # are preferred when geography is otherwise equal. Magnitude (12/room) is weaker than
+    # floor-match (+50) or building-match (+30) so geography still dominates cross-zone.
+    score -= att.total_supervised * 12
+
+    # Shift-specific adjustments on top of load balancing
     shift = att.staff.shift_type
     if shift == "3p-10p":
         score += 15
     elif shift == "2-A":
-        # 2-A comfortable at 2–3 rooms; small bonus when they have room to take more
         if att.total_supervised < 3:
             score += 5
     elif shift == "1-A":
-        # Strong penalty for each additional room — 1:1 is ideal to preserve R1 reserve
-        score -= att.total_supervised * 35
+        # Extra penalty per room to preserve R1 reserve at 1:1
+        score -= att.total_supervised * 23   # total 1-A penalty = 12 + 23 = 35/room
 
     # Prefer already-deployed attendings in their room (continuity rule 7)
     if att.staff.already_deployed and att.staff.daytime_or == room.id:
