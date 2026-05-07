@@ -10,7 +10,7 @@ from .models import OperatingRoom, StaffMember
 VALID_BUILDINGS = {"Legacy", "Lunder", "IR", "Endo"}
 VALID_FLOORS = {"THOR", "Gray", "Jackson", "L2", "L3", "L4", "IR", "Endo"}
 VALID_ROLES = {"attending", "CRNA", "resident"}
-VALID_SHIFT_TYPES = {"1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p"}
+VALID_SHIFT_TYPES = {"1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p", "moonlighter"}
 VALID_RESIDENT_LEVELS = {"R2", "R3", "R4"}
 
 BUILDING_FLOOR_MAP = {

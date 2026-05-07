@@ -4,7 +4,7 @@ Core assignment algorithm for MGH Anesthesia 5PM Coverage Planner.
 Steps mirror the specification exactly:
   1. Identify late ORs and relief needs
   2. Place CRNAs (continuity first, then pool)
-  3. Place residents (after all CRNAs placed; R2 restricted to complex)
+  3. Place residents (after all CRNAs placed)
   4-6. Assign attendings (supervisors then solos)
   7. Optimization passes
 """
@@ -126,8 +126,8 @@ class _AttState:
 # Scoring helpers
 # ---------------------------------------------------------------------------
 
-_SUPERVISION_PRIORITY = {"3p-10p": 0, "2-A": 1, "7a-7p": 2, "1-A": 3}
-_SOLO_PRIORITY = {"7a-7p": 0, "2-A": 1, "3p-10p": 2, "1-A": 3}
+_SUPERVISION_PRIORITY = {"3p-10p": 0, "2-A": 1, "7a-7p": 2, "1-A": 3, "moonlighter": 99}
+_SOLO_PRIORITY = {"moonlighter": 0, "7a-7p": 1, "2-A": 2, "3p-10p": 3, "1-A": 4}
 
 
 def _supervision_score(att: _AttState, room: OperatingRoom, physical_type: str) -> int:
@@ -254,8 +254,6 @@ def _find_resident(
         s for s in pool
         if s.name not in used
         and not (room.flagged_fluoro and "no-fluoro" in s.restrictions)
-        # R2 only for complex/long cases (Hard Rule 6)
-        and not (s.resident_level == "R2" and not room.flagged_complex)
     ]
     if not candidates:
         return None
@@ -485,13 +483,37 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             att_states[best_att.name].set_solo(room)
             used_attendings.add(best_att.name)
         else:
-            unassigned_rooms.append(room.id)
-            warnings.append(CoverageWarning(
-                severity="error",
-                message=f"OR {room.id}: no available attending for solo coverage — "
-                        "consider asking daytime staff to stay",
-                or_id=room.id,
-            ))
+            # Last resort: allow 1-A/2-A to cover solo rather than leave room uncovered
+            fallback_att: Optional[StaffMember] = None
+            fallback_score = -9999
+            for att in solo_ordered:
+                att_st = att_states[att.name]
+                if att_st.is_solo or att_st.total_supervised > 0:
+                    continue
+                if room.flagged_fluoro and "no-fluoro" in att.restrictions:
+                    continue
+                sc = _solo_score(att_st, room)
+                if sc > fallback_score:
+                    fallback_score = sc
+                    fallback_att = att
+            if fallback_att:
+                att_states[fallback_att.name].set_solo(room)
+                used_attendings.add(fallback_att.name)
+                warnings.append(CoverageWarning(
+                    severity="warning",
+                    message=f"OR {room.id}: {fallback_att.name} ({fallback_att.shift_type}) "
+                            "assigned solo as last resort — no other attending available; "
+                            "R1 reserve capacity reduced",
+                    or_id=room.id,
+                ))
+            else:
+                unassigned_rooms.append(room.id)
+                warnings.append(CoverageWarning(
+                    severity="error",
+                    message=f"OR {room.id}: no available attending for solo coverage — "
+                            "consider asking daytime staff to stay or adding a moonlighter",
+                    or_id=room.id,
+                ))
 
     # ------------------------------------------------------------------ #
     # Step 7 – Optimization passes                                         #

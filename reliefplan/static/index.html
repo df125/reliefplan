@@ -232,6 +232,8 @@
           </table>
         </div>
         <button class="btn-add-row" onclick="addStaffRow()">+ Add staff member</button>
+        <button class="btn-add-row" onclick="addMoonlighterRow()"
+                style="background:#f3e8ff;color:#6b21a8;border-color:#c084fc;margin-left:6px">+ Add moonlighter</button>
       </div>
     </div>
   </div>
@@ -286,7 +288,11 @@
   </div>
 
   <!-- ── Step 5: Generate ───────────────────────────────────── -->
-  <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
+    <button onclick="resetAll()" style="padding:10px 18px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;color:#6b7280;font-size:.9rem;cursor:pointer"
+            title="Clear all inputs and start over">↺ Reset / Start Fresh</button>
+  </div>
 
   <!-- ── Spinner ───────────────────────────────────────────── -->
   <div id="spinner" class="spinner-overlay d-none">
@@ -337,9 +343,10 @@ const FLOOR_TO_BUILDING = {
 const FLOOR_ORDER = {THOR:0, Gray:1, Jackson:2, L2:3, L3:4, L4:5, IR:10, Endo:11};
 
 const SHIFTS = {
-  attending: ["1-A","2-A","7a-7p","3p-10p"],
-  CRNA:      ["CRNA-7a-8p","CRNA-5p-8p"],
-  resident:  ["3p-10p","1-A","2-A","7a-7p"],
+  attending:   ["1-A","2-A","7a-7p","3p-10p"],
+  CRNA:        ["CRNA-7a-8p","CRNA-5p-8p"],
+  resident:    ["3p-10p","1-A","2-A","7a-7p"],
+  moonlighter: ["moonlighter"],
 };
 
 function esc(v) {
@@ -976,8 +983,13 @@ function renderStaffTable(staffList) {
   document.getElementById("staff-preview").classList.toggle("d-none", staffList.length === 0);
 }
 
+function addMoonlighterRow() {
+  addStaffRow({ role: "moonlighter", shiftType: "moonlighter", isMoonlighter: true, availablePast5pm: true });
+}
+
 function addStaffRow(d = {}) {
-  const role      = d.role || "attending";
+  const isMoonlighterRole = d.role === "moonlighter" || !!(d.isMoonlighter || d.is_moonlighter);
+  const role      = isMoonlighterRole ? "moonlighter" : (d.role || "attending");
   const shiftList = SHIFTS[role] || SHIFTS.attending;
   const selShift  = d.shiftType || shiftList[0];
   const level     = d.residentLevel || "R3";
@@ -986,7 +998,7 @@ function addStaffRow(d = {}) {
   const shiftOpts = shiftList.map(s =>
     `<option value="${s}"${s===selShift?" selected":""}>${s}</option>`).join("");
 
-  const isMoonlighter = !!(d.isMoonlighter || d.is_moonlighter);
+  const isMoonlighter = isMoonlighterRole || !!(d.isMoonlighter || d.is_moonlighter);
   const departureTarget = d.departureTarget || d.departure_target || "";
   const daytimeLoc = d.daytimeLocation || d.daytime_location || offsiteStaff[d.name] || "";
   const epBadge = daytimeLoc === "EP"
@@ -1001,7 +1013,7 @@ function addStaffRow(d = {}) {
     <td><input type="text" data-field="name" value="${esc(d.name||"")}" placeholder="Dr. Smith" style="min-width:130px">${epBadge}<input type="hidden" data-field="daytimeLocation" value="${esc(daytimeLoc)}"></td>
     <td>
       <select data-field="role" onchange="onRoleChange(this)">
-        ${["attending","CRNA","resident"].map(r =>
+        ${["attending","CRNA","resident","moonlighter"].map(r =>
           `<option value="${r}"${r===role?" selected":""}>${r}</option>`).join("")}
       </select>
     </td>
@@ -1077,7 +1089,9 @@ function collectStaff() {
     const g = f => row.querySelector(`[data-field="${f}"]`);
     const name = g("name")?.value?.trim();
     if (!name) return null;
-    const role = g("role")?.value || "attending";
+    const rawRole = g("role")?.value || "attending";
+    const isMoon  = rawRole === "moonlighter" || g("moonlighter")?.checked || false;
+    const role    = rawRole === "moonlighter" ? "attending" : rawRole;
     return {
       name,
       role,
@@ -1088,7 +1102,7 @@ function collectStaff() {
       affinities:      [],
       daytimeOR:        parseInt(g("daytimeOR")?.value) || null,
       alreadyDeployed:  g("deployed")?.checked || false,
-      isMoonlighter:    g("moonlighter")?.checked || false,
+      isMoonlighter:    isMoon,
       departureTarget:  g("departureTarget")?.value?.trim() || "",
       daytimeLocation:  g("daytimeLocation")?.value || "",
     };
@@ -1784,6 +1798,13 @@ async function copySummary() {
     alert("Press Ctrl+C / Cmd+C to copy, then OK to close.");
     ta.remove();
   }
+}
+
+function resetAll() {
+  if (!confirm("Clear all inputs and start fresh?")) return;
+  const key = "reliefplan_" + new Date().toLocaleDateString("en-CA", {timeZone: "America/New_York"});
+  localStorage.removeItem(key);
+  location.reload();
 }
 
 /* =====================================================================
