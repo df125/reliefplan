@@ -639,6 +639,37 @@ async def parse_refinement(
     for or_id in sorted(plan.get("unassigned_rooms", [])):
         plan_lines.append(f"  OR {or_id}: UNASSIGNED")
 
+    # Build per-attending load summary so the LLM can reason about rebalancing
+    _or_meta: dict[int, dict] = {r["id"]: r for r in rooms if "id" in r}
+    _att_loads: dict[str, dict] = {}
+    for a in plan.get("assignments", []):
+        att = a["attending"]
+        if att not in _att_loads:
+            _att_loads[att] = {"rooms": [], "has_resident": False, "floors": set()}
+        _att_loads[att]["rooms"].append(a["or_id"])
+        if a.get("physical_provider_type") == "resident":
+            _att_loads[att]["has_resident"] = True
+        rm = _or_meta.get(a["or_id"], {})
+        if rm.get("floor"):
+            _att_loads[att]["floors"].add(rm["floor"])
+
+    load_lines = ["Attending loads (use this to reason about rebalancing requests):"]
+    for s in staff:
+        if s.get("role") != "attending":
+            continue
+        name = s["name"]
+        if name in _att_loads:
+            l = _att_loads[name]
+            max_rooms = 2 if l["has_resident"] else 4
+            remaining = max_rooms - len(l["rooms"])
+            load_lines.append(
+                f"  {name} [{s.get('shiftType','')}]: {len(l['rooms'])} room(s) "
+                f"(has_resident={l['has_resident']}, max={max_rooms}, can_add={remaining}), "
+                f"floors={sorted(l['floors'])}, ORs={sorted(l['rooms'])}"
+            )
+        else:
+            load_lines.append(f"  {name} [{s.get('shiftType','')}]: UNASSIGNED — 0 rooms, can take up to 4 (CRNA) or 2 (if any resident)")
+
     staff_lines = ["Available staff (use exact names):"]
     for s in staff:
         restr = f" [restrictions: {', '.join(s.get('restrictions', []))}]" if s.get("restrictions") else ""
@@ -695,7 +726,24 @@ async def parse_refinement(
         "    record it in unhandled_requests with a clear suggested_feature for a developer.",
         "    Do NOT silently drop unrecognised intent.",
         "",
+        "Supervision constraints (use when reasoning about rebalancing requests):",
+        "  • If an attending supervises ANY room with a resident: max 2 supervised rooms total.",
+        "  • If all supervised rooms have CRNAs (no residents): max 4 supervised rooms.",
+        "  • Lunder floor restriction: an attending may cover L2+L3, L3+L4, or L2+L3+L4,",
+        "    but NOT L2 and L4 together without also covering L3.",
+        "  • Legacy: attending may cover any mix of THOR, Gray, Jackson floors freely.",
+        "  • For rebalancing requests (e.g. 'have X supervise 3 CRNAs on L3'):",
+        "    - Check the attending loads below — 'can_add' shows how many more rooms they can take.",
+        "    - UNASSIGNED attendings can be given rooms via set_attending to free up other attendings.",
+        "    - set_attending replaces the attending in that OR. Plan the full sequence of moves:",
+        "      first assign the unassigned attending to any room being vacated, then move the",
+        "      target attending to their new rooms. Emit all needed set_attending ops together.",
+        "    - Do NOT put this in unhandled_requests just because it requires multiple steps.",
+        "      Work through the logic and emit the complete sequence of edits.",
+        "",
         "\n".join(plan_lines),
+        "",
+        "\n".join(load_lines),
         "",
         "\n".join(staff_lines),
         "",
