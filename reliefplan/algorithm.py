@@ -503,7 +503,10 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # rather than being consumed earlier by a room they have weaker affinity for.
     def _supervised_sort_key(r: OperatingRoom):
         prov_name, prov_type, _ = physical[r.id]
-        res_type_order = 0 if prov_type == "resident" else 1  # residents constrain ratio more
+        # Process CRNA rooms before resident rooms: this lets attendings cluster on same-type,
+        # same-floor CRNA loads; resident rooms go to whoever has remaining capacity.
+        # (Residents constrain ratio more, so we don't want to "spend" a slot on them early.)
+        res_type_order = 1 if prov_type == "resident" else 0
         # Compute peak affinity any unassigned attending has for this room
         best_affinity = 0
         for att in attending_pool:
