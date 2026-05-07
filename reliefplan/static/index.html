@@ -279,6 +279,28 @@
       <span id="situation-status" style="margin-left:10px"></span>
     </div>
     <div class="step-body">
+      <!-- Transplant Call Resident (structured question, not LLM-parsed) -->
+      <div style="margin-bottom:12px;padding:10px 14px;background:#f0fdf4;border-radius:6px;border:1px solid #bbf7d0">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:.87rem;font-weight:600;color:#14532d">Transplant Call Resident available tonight?</span>
+          <div style="display:flex;gap:6px">
+            <button id="tx-call-yes" onclick="setTxCall(true)"
+                    style="font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151">Yes</button>
+            <button id="tx-call-no" onclick="setTxCall(false)"
+                    style="font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151;font-weight:600">No</button>
+          </div>
+        </div>
+        <div id="tx-call-room-row" style="display:none;margin-top:8px;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:.83rem;color:#374151">Current room:</span>
+          <input id="tx-call-room" type="number" min="1" max="99" placeholder="OR #"
+                 style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.83rem"
+                 oninput="scheduleSave()">
+          <button onclick="document.getElementById('tx-call-room').value='';scheduleSave()"
+                  style="font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151">
+            Not in a room
+          </button>
+        </div>
+      </div>
       <textarea id="situation-text" class="paste-area" rows="4"
         placeholder="Describe any last-minute changes in plain English. Examples:&#10;  • OR 44 is a complex cardiac case using fluoro&#10;  • OR 63 closed — team moved to OR 71&#10;  • Dr. Moonlighter is joining us tonight until 10pm&#10;  • Dr. Kelleher agreed to stay late"></textarea>
       <button class="parse-btn" id="situation-btn" onclick="processSituation()">Process Update</button>
@@ -1136,7 +1158,7 @@ function collectORs() {
 }
 
 function collectStaff() {
-  return Array.from(document.querySelectorAll("#staff-tbody tr")).map(row => {
+  const result = Array.from(document.querySelectorAll("#staff-tbody tr")).map(row => {
     const g = f => row.querySelector(`[data-field="${f}"]`);
     const name = g("name")?.value?.trim();
     if (!name) return null;
@@ -1158,6 +1180,27 @@ function collectStaff() {
       daytimeLocation:  g("daytimeLocation")?.value || "",
     };
   }).filter(Boolean);
+
+  // Inject Transplant Call Resident if the toggle is set to Yes
+  const txRoomRow = document.getElementById("tx-call-room-row");
+  if (txRoomRow && txRoomRow.style.display !== "none") {
+    const txRoom = parseInt(document.getElementById("tx-call-room")?.value) || null;
+    result.push({
+      name:             "Tx Call Resident",
+      role:             "resident",
+      residentLevel:    "R3",
+      shiftType:        "3p-10p",
+      availablePast5pm: true,
+      restrictions:     [],
+      affinities:       [],
+      daytimeOR:        txRoom,
+      alreadyDeployed:  txRoom !== null,
+      isMoonlighter:    false,
+      departureTarget:  "",
+      daytimeLocation:  "",
+    });
+  }
+  return result;
 }
 
 /* =====================================================================
@@ -1615,6 +1658,28 @@ function downloadDebugReport(reportKey) {
 }
 
 /* =====================================================================
+   Transplant Call Resident toggle
+===================================================================== */
+function setTxCall(available) {
+  const yesBtn  = document.getElementById("tx-call-yes");
+  const noBtn   = document.getElementById("tx-call-no");
+  const roomRow = document.getElementById("tx-call-room-row");
+  if (!yesBtn) return;
+  if (available) {
+    yesBtn.style.cssText = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #16a34a;cursor:pointer;background:#16a34a;color:#fff;font-weight:600";
+    noBtn.style.cssText  = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151";
+    roomRow.style.display = "flex";
+  } else {
+    yesBtn.style.cssText = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151";
+    noBtn.style.cssText  = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151;font-weight:600";
+    roomRow.style.display = "none";
+    const inp = document.getElementById("tx-call-room");
+    if (inp) inp.value = "";
+  }
+  scheduleSave();
+}
+
+/* =====================================================================
    API — situation update
 ===================================================================== */
 async function processSituation() {
@@ -1911,6 +1976,8 @@ function saveSession() {
       irCount:       document.getElementById("ir-count")?.value        || "0",
       endoCount:     document.getElementById("endo-count")?.value      || "0",
       orConf:        Object.fromEntries(Object.entries(orConfidence)),
+      txCallAvail:   document.getElementById("tx-call-room-row")?.style.display !== "none",
+      txCallRoom:    document.getElementById("tx-call-room")?.value    || "",
       staff:         collectStaff(),
       ors:           collectORs(),
       plan:          currentPlanData || null,
@@ -1943,6 +2010,7 @@ function restoreSession() {
     if (s.lateORsInput) document.getElementById("late-ors-input").value = s.lateORsInput;
     if (s.irCount)      document.getElementById("ir-count").value       = s.irCount;
     if (s.endoCount)    document.getElementById("endo-count").value     = s.endoCount;
+    if (s.txCallAvail)  { setTxCall(true); if (s.txCallRoom) document.getElementById("tx-call-room").value = s.txCallRoom; }
 
     if (s.orConf) {
       for (const [k, v] of Object.entries(s.orConf)) orConfidence[+k || k] = v;
