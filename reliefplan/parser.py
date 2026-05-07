@@ -307,22 +307,29 @@ _REFINE_TOOL: dict[str, Any] = {
             "staff_additions": {
                 "type": "array",
                 "description": (
-                    "Populate when the user says a daytime provider agreed to stay late. "
-                    "Use the EXACT full name from the daytime providers list. Leave empty otherwise."
+                    "Populate for two cases: (1) a daytime provider agreed to stay late — "
+                    "use their exact full name from the daytime providers list; "
+                    "(2) a moonlighting attending is joining for the evening — "
+                    "use the name as given, set isMoonlighter=true, shiftType='moonlighter'. "
+                    "Leave empty if neither case applies."
                 ),
                 "items": {
                     "type": "object",
                     "properties": {
-                        "name":       {"type": "string"},
-                        "role":       {"type": "string", "enum": ["attending", "CRNA", "resident"]},
-                        "shiftType":  {
+                        "name":          {"type": "string"},
+                        "role":          {"type": "string", "enum": ["attending", "CRNA", "resident"]},
+                        "shiftType":     {
                             "type": "string",
-                            "enum": ["1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p"],
-                            "description": "Use '7a-7p' for a daytime attending staying late.",
+                            "enum": ["1-A", "2-A", "7a-7p", "3p-10p", "CRNA-7a-8p", "CRNA-5p-8p", "moonlighter"],
+                            "description": "Use 'moonlighter' for moonlighting attendings; '7a-7p' for a daytime attending staying late.",
+                        },
+                        "isMoonlighter": {
+                            "type": "boolean",
+                            "description": "Set true when the person is described as moonlighting or moonlighter.",
                         },
                         "daytime_or": {
                             "type": "integer",
-                            "description": "OR number the provider covered during the day.",
+                            "description": "OR number the provider covered during the day (omit for moonlighters).",
                         },
                     },
                     "required": ["name", "role", "shiftType"],
@@ -661,13 +668,15 @@ async def parse_refinement(
         "Hard rules (enforce — mark violating edits as rejected=true):",
         "  • An attending cannot supervise rooms in both Legacy AND Lunder buildings.",
         "  • Staff with 'no-fluoro' restriction cannot go into a fluoro-flagged OR.",
-        "  • R2 residents may only go in complex-flagged ORs.",
         "  • A CRNA or resident must have an attending assigned to their OR.",
         "  • Use exact names from the PM staff list or daytime providers list — do not invent names.",
         "  • If the user gives only a last name, match it against PM staff or daytime providers below.",
         "    Use the full name when a unique match is found.",
         "  • If a daytime provider agreed to stay, add them to staff_additions with their exact",
         "    full name; do NOT mark that assignment edit as rejected.",
+        "  • If the user mentions moonlighting attendings (e.g. 'We have moonlighters X and Y'),",
+        "    add each to staff_additions with role='attending', shiftType='moonlighter',",
+        "    isMoonlighter=true. Use the name exactly as given. Do not reject these.",
         "  • If the user says an OR is no longer running late, emit remove_or in or_list_changes",
         "    AND emit remove_attending for that OR in edits.",
         "  • If the user says a new OR is running late, emit add_or in or_list_changes.",

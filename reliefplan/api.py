@@ -97,15 +97,16 @@ async def api_refine(request: Request) -> dict[str, Any]:
         daytime_or = sa.get("daytime_or") or next(
             (r.id for r in rooms if r.daytime_attending == sa_name), None
         )
-        shift = sa.get("shiftType") or "7a-7p"
+        is_moon = bool(sa.get("isMoonlighter"))
+        shift = sa.get("shiftType") or ("moonlighter" if is_moon else "7a-7p")
         if shift not in VALID_SHIFT_TYPES:
-            shift = "7a-7p"
+            shift = "moonlighter" if is_moon else "7a-7p"
         staff_dict = {
             "name": sa_name, "role": sa.get("role") or "attending",
             "shiftType": shift, "availablePast5pm": True,
             "restrictions": [], "affinities": [],
-            "daytimeOR": daytime_or, "alreadyDeployed": True,
-            "isMoonlighter": False, "departureTarget": "",
+            "daytimeOR": daytime_or, "alreadyDeployed": not is_moon,
+            "isMoonlighter": is_moon, "departureTarget": "",
         }
         try:
             staff.append(_parse_staff(staff_dict, len(staff)))

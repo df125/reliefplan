@@ -80,12 +80,6 @@ def apply_edits(
                     f"'{name}' has a no-fluoro restriction; OR {or_id} requires fluoro capability."
                 )
                 continue
-            if sm.role == "resident" and sm.resident_level == "R2":
-                if room and not room.flagged_complex:
-                    rejected.append(
-                        f"R2 resident '{name}' can only be placed in complex-flagged ORs; OR {or_id} is not flagged complex."
-                    )
-                    continue
             old = assignments[or_id].get("physical_provider")
             assignments[or_id]["physical_provider"]      = name
             assignments[or_id]["physical_provider_type"] = sm.role
