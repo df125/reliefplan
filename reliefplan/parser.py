@@ -750,6 +750,9 @@ Guidelines:
     (a) Truly new PM staff (moonlighters, stay-late daytime attendings not yet on the list).
         Set isMoonlighter=true if described as "moonlighter" or "moonlighting".
         Set departureTarget to a 24h time string if a specific departure time is mentioned.
+        IMPORTANT: For a daytime attending who is staying late, look up their OR number from
+        the room list above (which shows "daytime attending: Name" for each room). Set daytimeOR
+        to that OR number and alreadyDeployed=true so the algorithm keeps them in their own room.
     (b) An EXISTING PM staff member whose deployment to an OR is being reported (e.g. "White-Dzuro
         has been in OR 90 since 3pm" when White-Dzuro is already on the PM list). In this case,
         include them in staff_additions with their exact current name, alreadyDeployed=true, and
@@ -770,7 +773,12 @@ async def parse_situation(
     Raises ValueError if no API key; RuntimeError on unexpected response.
     """
     room_context = ", ".join(
-        f"OR {r.get('id')} ({r.get('building','?')}/{r.get('floor','?')})" for r in rooms
+        "OR {id} ({floor}, daytime attending: {att})".format(
+            id=r.get("id"),
+            floor=r.get("floor", "?"),
+            att=r.get("daytimeAttending") or r.get("daytime_attending") or "unknown",
+        )
+        for r in rooms
     )
     staff_context = ", ".join(
         f"{s.get('name')} ({s.get('role')})" for s in staff

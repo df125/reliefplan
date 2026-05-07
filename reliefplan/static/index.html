@@ -1803,6 +1803,8 @@ async function processSituation() {
       }
     }
 
+    // Fill in daytimeOR for any stay-late attendings just added (safety net if LLM omitted it)
+    autopopulateDaytimeORs();
     scheduleSave();
 
     // Render summary
