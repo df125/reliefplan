@@ -393,6 +393,110 @@ def _find_resident(
 
 
 # ---------------------------------------------------------------------------
+# Region-first provider-type decision
+# ---------------------------------------------------------------------------
+
+def _identify_regions(late_rooms: List[OperatingRoom]) -> Dict[str, List[OperatingRoom]]:
+    """Group late rooms into geographic clusters.
+
+    Legacy floors share one building → single region.
+    Each Lunder floor is its own natural cluster.
+    IR/Endo are isolated offsite; they get their own floor key.
+    """
+    regions: Dict[str, List[OperatingRoom]] = {}
+    for room in late_rooms:
+        key = "Legacy" if room.building == "Legacy" else room.floor
+        regions.setdefault(key, []).append(room)
+    return regions
+
+
+def _decide_provider_types(
+    late_rooms: List[OperatingRoom],
+    crna_pool: List[StaffMember],
+    resident_pool: List[StaffMember],
+    attending_pool: List[StaffMember],
+) -> Dict[int, str]:
+    """Return or_id → "CRNA" | "resident" | "solo" for every late room.
+
+    Regions are processed largest-first so big CRNA clusters (Legacy, L3) consume
+    the pool before smaller floors — matching coordinator intuition.
+    Within each region, rooms are sorted: locked-attending rooms first (they anchor
+    the region type), then non-complex, then complex rooms (resident candidates).
+    Complex rooms with available CRNA continuity are processed last so they fall
+    through to rule 2 (CRNA) rather than rule 1 (R2 resident).
+    """
+    regions = _identify_regions(late_rooms)
+
+    crna_budget = len(crna_pool)
+    r2_budget = sum(1 for s in resident_pool if s.resident_level == "R2")
+    resident_budget = len(resident_pool)
+
+    locked_att_rooms: Set[int] = {
+        s.daytime_or for s in attending_pool if s.already_deployed and s.daytime_or
+    }
+    crna_pool_names: Set[str] = {s.name for s in crna_pool}
+    crna_pool_ors: Set[int] = {s.daytime_or for s in crna_pool if s.daytime_or}
+
+    def has_crna_continuity(room: OperatingRoom) -> bool:
+        return bool(
+            (room.daytime_crna and room.daytime_crna in crna_pool_names)
+            or room.id in crna_pool_ors
+        )
+
+    desired_types: Dict[int, str] = {}
+
+    for _, region_rooms in sorted(regions.items(), key=lambda x: -len(x[1])):
+        def _room_sort_key(r: OperatingRoom) -> Tuple:
+            locked_tier = 0 if r.id in locked_att_rooms else 1
+            if r.flagged_complex:
+                # complex without CRNA continuity → earlier (resident candidate)
+                # complex with CRNA continuity → later (protect the CRNA relationship)
+                sub = 2 if not has_crna_continuity(r) else 3
+            else:
+                sub = 1
+            return (locked_tier, sub)
+
+        sorted_rooms = sorted(region_rooms, key=_room_sort_key)
+
+        for room in sorted_rooms:
+            if room.flagged_complex and r2_budget > 0 and not has_crna_continuity(room):
+                # Complex case with R2 available and no CRNA continuity to protect
+                desired_types[room.id] = "resident"
+                r2_budget -= 1
+                resident_budget -= 1
+            elif crna_budget > 0:
+                desired_types[room.id] = "CRNA"
+                crna_budget -= 1
+            elif resident_budget > 0:
+                desired_types[room.id] = "resident"
+                resident_budget -= 1
+            else:
+                desired_types[room.id] = "solo"
+
+        # Within-region sanity swap: if a locked room was forced to "resident"
+        # (CRNA budget exhausted) but a non-locked CRNA-designated room exists
+        # in the same region, swap — the locked attending is on-site anyway and
+        # benefits more from a CRNA (4:1 capacity).
+        for room in sorted_rooms:
+            if room.id not in locked_att_rooms:
+                continue
+            if desired_types.get(room.id) != "resident":
+                continue
+            for other in sorted_rooms:
+                if other.id == room.id or other.id in locked_att_rooms:
+                    continue
+                if desired_types.get(other.id) != "CRNA":
+                    continue
+                if other.flagged_complex and not has_crna_continuity(other):
+                    continue  # don't steal CRNA from a complex+no-continuity room
+                desired_types[room.id] = "CRNA"
+                desired_types[other.id] = "resident"
+                break
+
+    return desired_types
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -430,21 +534,23 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             relief_entries.append(ReliefEntry(room.id, room.daytime_attending, "attending"))
 
     # ------------------------------------------------------------------ #
+    # Step 1.5 – Region-first provider-type decision                       #
+    # ------------------------------------------------------------------ #
+    # Decide CRNA / resident / solo per room before any names are assigned.
+    # This ensures the attending's geographic cluster is respected when choosing
+    # provider types (e.g. all L4 rooms get CRNAs so a locked attending can go 4:1).
+    desired_types = _decide_provider_types(late_rooms, crna_pool, resident_pool, attending_pool)
+
+    # ------------------------------------------------------------------ #
     # Step 2 – Place CRNAs                                                 #
     # ------------------------------------------------------------------ #
     late_or_ids: Set[int] = {r.id for r in late_rooms}
 
     # Sort so continuity rooms (daytime CRNA available by name OR daytime_or match) are first.
-    # Locked-attending rooms (already-deployed attendings with a continuity OR) get top priority
-    # so they receive a CRNA before the pool is consumed by other rooms.
     crna_or_map: Dict[int, str] = {s.daytime_or: s.name for s in crna_pool if s.daytime_or}
-    locked_att_rooms: Set[int] = {
-        s.daytime_or for s in attending_pool if s.already_deployed and s.daytime_or
-    }
     rooms_sorted_crna = sorted(
         late_rooms,
         key=lambda r: (
-            0 if r.id in locked_att_rooms else 1,
             0 if (r.daytime_crna and r.daytime_crna in staff_names)
               or r.id in crna_or_map else 1,
             0 if r.flagged_complex else 1,
@@ -453,6 +559,8 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
 
     crna_assigned_ors: Set[int] = set()
     for room in rooms_sorted_crna:
+        if desired_types.get(room.id) != "CRNA":
+            continue
         if room.id in physical:
             continue
         crna = _find_crna(
@@ -466,7 +574,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             crna_assigned_ors.add(room.id)
 
     # ------------------------------------------------------------------ #
-    # Step 3 – Place residents (only after CRNA pool exhausted per room)   #
+    # Step 3 – Place residents                                             #
     # ------------------------------------------------------------------ #
     rooms_sorted_res = sorted(
         late_rooms,
@@ -477,6 +585,8 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     )
 
     for room in rooms_sorted_res:
+        if desired_types.get(room.id) != "resident":
+            continue
         if room.id in physical:
             continue
         resident = _find_resident(room, resident_pool, used_providers)
@@ -484,47 +594,6 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             is_cont = resident.name == room.daytime_resident
             physical[room.id] = (resident.name, "resident", is_cont)
             used_providers.add(resident.name)
-
-    # ------------------------------------------------------------------ #
-    # Step 3.5 – Upgrade locked-attending rooms from resident to CRNA    #
-    # ------------------------------------------------------------------ #
-    # If a locked attending's continuity room ended up with a resident
-    # (because Step 2 consumed all CRNAs elsewhere before reaching this room),
-    # but a same-floor room has a non-continuity CRNA, swap them.
-    # This enables the attending to supervise a CRNA cluster on their floor
-    # instead of being capped at 2 rooms by the resident ratio rule.
-    rooms_by_id: Dict[int, OperatingRoom] = {r.id: r for r in late_rooms}
-    for att in attending_pool:
-        if not att.already_deployed or att.daytime_or is None:
-            continue
-        locked_id = att.daytime_or
-        if locked_id not in physical or physical[locked_id][1] != "resident":
-            continue
-        locked_room = rooms_by_id.get(locked_id)
-        if not locked_room:
-            continue
-        # Find same-floor rooms with non-continuity CRNAs (safe to swap)
-        swap_candidates = [
-            (rid, crna_name)
-            for rid, (crna_name, ptype, is_cont) in physical.items()
-            if ptype == "CRNA"
-            and not is_cont
-            and rooms_by_id.get(rid) is not None
-            and rooms_by_id[rid].floor == locked_room.floor
-            and rid != locked_id
-        ]
-        for swap_room_id, crna_name in swap_candidates:
-            swap_room = rooms_by_id[swap_room_id]
-            crna_member = next((s for s in crna_pool if s.name == crna_name), None)
-            resident_name = physical[locked_id][0]
-            resident_member = next((s for s in resident_pool if s.name == resident_name), None)
-            if crna_member and locked_room.flagged_fluoro and "no-fluoro" in crna_member.restrictions:
-                continue
-            if resident_member and swap_room.flagged_fluoro and "no-fluoro" in resident_member.restrictions:
-                continue
-            physical[locked_id] = (crna_name, "CRNA", crna_name == locked_room.daytime_crna)
-            physical[swap_room_id] = (resident_name, "resident", resident_name == swap_room.daytime_resident)
-            break
 
     # Warn about rooms still lacking a physical provider (will need solo attending)
     rooms_needing_solo: List[OperatingRoom] = []
