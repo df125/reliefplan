@@ -399,6 +399,20 @@ function checkStepLocks() {
   if (badge) badge.style.display = unlock ? "none" : "";
 }
 
+function _applyORMeta(orId, meta) {
+  if (!meta) return;
+  scheduleRooms[orId] = {
+    ...(scheduleRooms[orId] || {}),
+    attending:      meta.daytimeAttending || meta.attending    || "",
+    crna:           meta.daytimeCRNA      || meta.crna         || "",
+    resident:       meta.daytimeResident  || meta.resident     || "",
+    flaggedComplex: !!meta.flaggedComplex,
+    flaggedFluoro:  !!meta.flaggedFluoro,
+    isNewStart:     !!meta.isNewStart,
+    estimatedEnd:   meta.estimatedEnd || "",
+  };
+}
+
 function dismissOR(id) {
   const inp = document.getElementById("late-ors-input");
   const ids = parseLateORNumbers(inp.value).filter(n => n !== id);
@@ -1424,7 +1438,10 @@ async function refinePlan() {
           ids = ids.filter(id => id !== ch.or_id);
           localApplied.push(`OR ${ch.or_id} removed from late list`);
         } else if (ch.operation === "add_or") {
-          if (!ids.includes(ch.or_id)) ids.push(ch.or_id);
+          if (!ids.includes(ch.or_id)) {
+            _applyORMeta(ch.or_id, ch);
+            ids.push(ch.or_id);
+          }
           localApplied.push(`OR ${ch.or_id} added to late list`);
         }
       }
@@ -1858,6 +1875,19 @@ async function processSituation() {
       applied.push(`OR ${cl.or_id}: removed from late list (closed)`);
     }
     if ((data.room_closures || []).length) updateLatePreview();
+
+    // Apply room additions — newly running late or new case booked
+    for (const ra of (data.room_additions || [])) {
+      const inp = document.getElementById("late-ors-input");
+      const ids = parseLateORNumbers(inp.value);
+      if (!ids.includes(ra.or_id)) {
+        _applyORMeta(ra.or_id, ra);
+        ids.push(ra.or_id);
+        inp.value = ids.sort((a, b) => a - b).join(", ");
+        applied.push(`OR ${ra.or_id}: added to late list`);
+      }
+    }
+    if ((data.room_additions || []).length) updateLatePreview();
 
     // Apply team moves — copy OR card fields from one room to another
     for (const mv of (data.team_moves || [])) {

@@ -223,12 +223,33 @@ _SITUATION_TOOL: dict[str, Any] = {
                     "required": ["name", "role"],
                 },
             },
+            "room_additions": {
+                "type": "array",
+                "description": (
+                    "ORs newly added to the late-running list: case running longer than expected, "
+                    "or a new case just booked. Include any mentioned daytime staff, flags, or estimated end."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "or_id":            {"type": "integer"},
+                        "daytimeAttending": {"type": "string"},
+                        "daytimeCRNA":      {"type": "string"},
+                        "daytimeResident":  {"type": "string"},
+                        "flaggedComplex":   {"type": "boolean"},
+                        "flaggedFluoro":    {"type": "boolean"},
+                        "isNewStart":       {"type": "boolean"},
+                        "estimatedEnd":     {"type": "string", "description": "e.g. '21:00' or '10pm'"},
+                    },
+                    "required": ["or_id"],
+                },
+            },
             "summary": {
                 "type": "string",
                 "description": "Brief natural-language confirmation of what was understood.",
             },
         },
-        "required": ["room_flag_updates", "room_closures", "team_moves", "or_staff_swaps", "staff_additions", "summary"],
+        "required": ["room_flag_updates", "room_closures", "room_additions", "team_moves", "or_staff_swaps", "staff_additions", "summary"],
     },
 }
 
@@ -349,13 +370,21 @@ _REFINE_TOOL: dict[str, Any] = {
                 "type": "array",
                 "description": (
                     "Use when the user adds or removes an OR from the late-running list. "
-                    "For remove_or, also emit a remove_attending edit in edits[] to keep the plan consistent."
+                    "For remove_or, also emit a remove_attending edit in edits[] to keep the plan consistent. "
+                    "For add_or, include any mentioned attending/CRNA/resident and flags — these pre-populate the room card."
                 ),
                 "items": {
                     "type": "object",
                     "properties": {
-                        "operation": {"type": "string", "enum": ["add_or", "remove_or"]},
-                        "or_id":     {"type": "integer"},
+                        "operation":        {"type": "string", "enum": ["add_or", "remove_or"]},
+                        "or_id":            {"type": "integer"},
+                        "daytimeAttending": {"type": "string", "description": "Daytime attending for this room, if known."},
+                        "daytimeCRNA":      {"type": "string", "description": "Daytime CRNA for this room, if known."},
+                        "daytimeResident":  {"type": "string", "description": "Daytime resident for this room, if known."},
+                        "flaggedComplex":   {"type": "boolean"},
+                        "flaggedFluoro":    {"type": "boolean"},
+                        "isNewStart":       {"type": "boolean", "description": "True if case has not yet started."},
+                        "estimatedEnd":     {"type": "string",  "description": "e.g. '21:00' or '10pm'"},
                     },
                     "required": ["operation", "or_id"],
                 },
@@ -720,8 +749,11 @@ async def parse_refinement(
         "    isMoonlighter=true. Use the name exactly as given. Do not reject these.",
         "  • If the user says an OR is no longer running late, emit remove_or in or_list_changes",
         "    AND emit remove_attending for that OR in edits.",
-        "  • If the user says a new OR is running late, emit add_or in or_list_changes.",
-        "    Do not invent an attending assignment — the coordinator will fill in providers.",
+        "  • If the user says a new OR is running late or a new case is booked, emit add_or in",
+        "    or_list_changes. Include any mentioned attending/CRNA/resident names and flags",
+        "    (flaggedComplex, flaggedFluoro, isNewStart, estimatedEnd) — these pre-populate the",
+        "    room card. Do not invent an assignment edit for the new room; the coordinator",
+        "    will re-generate coverage for it.",
         "  • If any part of the user's request cannot be expressed as a supported operation,",
         "    record it in unhandled_requests with a clear suggested_feature for a developer.",
         "    Do NOT silently drop unrecognised intent.",
@@ -790,6 +822,9 @@ since the initial plan was entered. Parse the message and extract structured cha
 
 Guidelines:
 - room_closures: OR was cancelled or closed entirely; remove it from the late-running list.
+- room_additions: OR just added to the late-running list (case running longer than expected,
+  or a new case just booked). Include daytime attending/crna/resident if mentioned, plus
+  any flags (complex, fluoro, new-start) and estimated end time.
 - team_moves: the entire team from one OR physically moved to a different OR number (common when
   a case is bumped to another room). Copy daytime attending/crna/resident fields.
 - or_staff_swaps: a specific role in an OR changed (e.g. "attending in OR 12 is now Dr. Jones").
@@ -850,6 +885,7 @@ async def parse_situation(
     return {
         "room_flag_updates": args.get("room_flag_updates", []),
         "room_closures":     args.get("room_closures", []),
+        "room_additions":    args.get("room_additions", []),
         "team_moves":        args.get("team_moves", []),
         "or_staff_swaps":    args.get("or_staff_swaps", []),
         "staff_additions":   args.get("staff_additions", []),
