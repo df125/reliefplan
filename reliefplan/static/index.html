@@ -302,8 +302,8 @@
         </div>
       </div>
       <textarea id="situation-text" class="paste-area" rows="4"
-        placeholder="Describe any last-minute changes in plain English. Examples:&#10;  • OR 44 is a complex cardiac case using fluoro&#10;  • OR 63 closed — team moved to OR 71&#10;  • Dr. Moonlighter is joining us tonight until 10pm&#10;  • Dr. Kelleher agreed to stay late"></textarea>
-      <button class="parse-btn" id="situation-btn" onclick="processSituation()">Process Update</button>
+        placeholder="Describe any last-minute changes in plain English. Works before and after plan generation. Examples:&#10;  • OR 52 is also running late now — complex cardiac case&#10;  • OR 63 just finished — remove it from tonight&#10;  • New case just booked in OR 44 — new start, fluoro&#10;  • Dr. Moonlighter is joining us tonight until 10pm&#10;  • Move Jones to OR 63 instead of OR 44&#10;  • Swap the attendings in OR 15 and OR 44"></textarea>
+      <button class="parse-btn" id="situation-btn" onclick="processUpdate()">Apply Update</button>
       <p class="hint">AI-powered: requires GEMINI_API_KEY. If unavailable, edit OR cards and staff table directly.</p>
       <div id="situation-result"></div>
     </div>
@@ -324,20 +324,6 @@
   <!-- ── Results ───────────────────────────────────────────── -->
   <div id="results-section" class="d-none"></div>
 
-  <!-- ── Refine ─────────────────────────────────────────────── -->
-  <div id="refine-section" class="step-card d-none">
-    <div class="step-hdr">
-      <span class="step-num">5</span>
-      <strong>Refine Plan</strong>
-      <span id="refine-status" style="margin-left:10px"></span>
-    </div>
-    <div class="step-body">
-      <textarea id="refine-text" class="paste-area" rows="3"
-        placeholder="Describe any changes you'd like to make. For example:&#10;  • Move Jones to OR 63 instead of OR 44&#10;  • Dr. Smith should cover OR 82, not Dr. Johnson&#10;  • Swap the attendings in OR 15 and OR 44&#10;  • Remove the CRNA from OR 71 — attending will cover solo&#10;  • Rivera agreed to stay late — assign to OR 44&#10;  • OR 63 is no longer running late — remove it&#10;  • OR 25 is also running late now — add it"></textarea>
-      <button class="parse-btn" id="refine-btn" onclick="refinePlan()">Apply Changes</button>
-      <div id="refine-result"></div>
-    </div>
-  </div>
 
 </div><!-- /container -->
 
@@ -1387,20 +1373,21 @@ function renderResults(data) {
   section.classList.remove("d-none");
   section.scrollIntoView({behavior:"smooth"});
 
-  // Show refine section; clear previous refine feedback
-  document.getElementById("refine-section").classList.remove("d-none");
-  document.getElementById("refine-result").innerHTML = "";
-  document.getElementById("refine-status").innerHTML = "";
 }
 
-async function refinePlan() {
-  const feedback = document.getElementById("refine-text").value.trim();
+async function refinePlan(opts = {}) {
+  const textId   = opts.textId   || "refine-text";
+  const btnId    = opts.btnId    || "refine-btn";
+  const statusId = opts.statusId || "refine-status";
+  const resultId = opts.resultId || "refine-result";
+
+  const feedback = document.getElementById(textId)?.value?.trim();
   if (!feedback) return;
   if (!currentPlanData) { alert("Generate a plan first."); return; }
 
-  const btn      = document.getElementById("refine-btn");
-  const statusEl = document.getElementById("refine-status");
-  const resultEl = document.getElementById("refine-result");
+  const btn      = document.getElementById(btnId);
+  const statusEl = document.getElementById(statusId);
+  const resultEl = document.getElementById(resultId);
   btn.disabled = true;
   btn.textContent = "Processing…";
   statusEl.innerHTML = `<span class="status-pill status-warn">✨ Refining with AI…</span>`;
@@ -1484,10 +1471,6 @@ async function refinePlan() {
       html += `<div class="refine-summary" style="background:#d1fae5;border-color:#16a34a;margin-top:6px">
         ➕ Added to PM staff: ${data.staff_added.map(n => esc(n)).join(", ")}
       </div>`;
-    if (orChanges.some(c => c.operation === "add_or"))
-      html += `<div class="refine-summary" style="background:#fef9c3;border-color:#ca8a04;margin-top:6px">
-        ⚠ OR list changed — re-generate the plan to assign coverage for new rooms.
-      </div>`;
 
     // Debug report button when there are gaps or rejections
     const hasGaps = (data.changes_rejected?.length || data.unhandled_requests?.length);
@@ -1501,13 +1484,34 @@ async function refinePlan() {
 
     resultEl.innerHTML = html;
     statusEl.innerHTML = "";
-    document.getElementById("refine-text").value = "";
+    document.getElementById(textId).value = "";
+
+    // Auto re-generate when rooms were added to the late list
+    const hasNewRooms = orChanges.some(c => c.operation === "add_or");
+    if (hasNewRooms) {
+      statusEl.innerHTML = `<span class="status-pill status-warn">↻ Re-generating plan for new room(s)…</span>`;
+      await runPlan();
+      statusEl.innerHTML = "";
+    }
 
   } catch (err) {
     statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}</span>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Apply Changes";
+    btn.textContent = "Apply Update";
+  }
+}
+
+async function processUpdate() {
+  if (currentPlanData) {
+    await refinePlan({
+      textId:   "situation-text",
+      btnId:    "situation-btn",
+      statusId: "situation-status",
+      resultId: "situation-result",
+    });
+  } else {
+    await processSituation();
   }
 }
 
