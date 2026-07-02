@@ -164,6 +164,43 @@
     .change-list.applied  li::before { content:"✓ "; font-weight:700; }
     .change-list.rejected li { background:#fee2e2; color:#7f1d1d; }
     .change-list.rejected li::before { content:"✗ "; font-weight:700; }
+
+    /* ── Transplant-call toggle ──────────────────────────── */
+    .tx-btn { font-size:.8rem; padding:3px 12px; border-radius:4px; border:1px solid #d1d5db;
+              cursor:pointer; background:#e5e7eb; color:#374151; }
+    .tx-btn.active { background:#16a34a; border-color:#16a34a; color:#fff; font-weight:600; }
+    .tx-btn.active::before { content:"✓ "; }
+    .tx-noroom { font-size:.8rem; padding:3px 10px; border:1px solid #d1d5db; border-radius:4px;
+                 background:#f3f4f6; cursor:pointer; color:#374151; }
+    .tx-noroom.active { background:#6b7280; border-color:#6b7280; color:#fff; font-weight:600; }
+    .tx-noroom.active::before { content:"✓ "; }
+
+    /* ── Results two-column layout ───────────────────────── */
+    .results-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+
+    /* ── Responsive ──────────────────────────────────────── */
+    @media (max-width: 720px) {
+      body { font-size:.95rem; }
+      .results-grid { grid-template-columns:1fr; }
+      .parse-btn, .btn-add-row, .run-btn { padding:10px 20px; }
+      .or-cards { grid-template-columns:1fr; }
+      .topbar { padding:10px 12px; }
+      .step-body { padding:12px 10px; }
+    }
+
+    /* ── Print: coverage board only ──────────────────────── */
+    @media print {
+      body { background:#fff; font-size:.8rem; }
+      .topbar, .step-card, .run-btn, .spinner-overlay, .no-print,
+      #refine-section { display:none !important; }
+      .section-card { box-shadow:none; border:1px solid #d1d5db;
+                      break-inside:avoid; }
+      .card-hdr { background:#fff !important; color:#000;
+                  border-bottom:2px solid #000; }
+      .card-hdr strong { color:#000; }
+      thead th { background:#f3f4f6 !important; color:#000; }
+      .results-grid { grid-template-columns:1fr; }
+    }
   </style>
 </head>
 <body>
@@ -192,7 +229,7 @@
       <span id="schedule-status"></span>
     </div>
     <div class="step-body">
-      <textarea id="schedule-paste" class="paste-area" rows="7"
+      <textarea id="schedule-paste" class="paste-area" rows="7" aria-label="Today's OR roadmap (paste from Epic)"
         placeholder="Paste today's full OR roadmap here (copy from Epic). Parsing happens automatically.&#10;&#10;Format: Sections by floor (THOR · Gray · Jackson · Lunder 2/3/4 · EP · ENDO · OMOR).&#10;OR numbers appear as column headers; Staff / CRNA / Resident rows follow each section."></textarea>
       <button class="parse-btn parse-btn-sm" id="parse-schedule-btn" onclick="parseScheduleNow()">Re-parse</button>
       <p class="hint">Sections for EP (EP1–EP5), ENDO (ENDO6–11), and IR (ADULT RAD A–D) are recognised automatically for staff provenance.</p>
@@ -207,7 +244,7 @@
       <span id="staff-status"></span>
     </div>
     <div class="step-body">
-      <textarea id="staff-paste" class="paste-area" rows="6"
+      <textarea id="staff-paste" class="paste-area" rows="6" aria-label="Tonight's PM staff list (paste from Qgenda)"
         placeholder="Paste tonight's PM staff list from Qgenda here. Parsing happens automatically.&#10;&#10;Shift labels: 1-A · 2-A · 3p-10p · 7a-7p · CRNA-7a-8p · CRNA-5p-8p · R2 / R3 / R4&#10;List each name on its own line under its shift label. Names are last-name only or full name.&#10;&#10;If a staff member was already placed in a room before 5pm, check the Deployed box in the table below."></textarea>
       <button class="parse-btn parse-btn-sm" id="parse-staff-btn" onclick="parseStaffNow()">Re-parse</button>
       <p class="hint">Check <strong>Deployed</strong> for any evening staff already running a room at 5pm — they'll be given priority continuity for that OR.</p>
@@ -248,7 +285,7 @@
     </div>
     <div class="step-body">
       <input type="text" id="late-ors-input" class="late-input"
-        placeholder="e.g.  44, 63, 71, 82"
+        placeholder="e.g.  44, 63, 71, 82" aria-label="Late-running OR numbers, comma-separated"
         oninput="updateLatePreview()" autocomplete="off">
       <p class="hint">Enter OR numbers separated by commas. Provider info is pre-filled from the roadmap — edit any card field to reflect last-minute staffing changes. Use the Deployed checkbox in the staff table (Step 2) for evening staff already in a room at 5pm.</p>
       <div id="late-or-cards" class="or-cards"></div>
@@ -284,26 +321,27 @@
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:.87rem;font-weight:600;color:#14532d">Transplant Call Resident available tonight?</span>
           <div style="display:flex;gap:6px">
-            <button id="tx-call-yes" onclick="setTxCall(true)"
-                    style="font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151">Yes</button>
-            <button id="tx-call-no" onclick="setTxCall(false)"
-                    style="font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151;font-weight:600">No</button>
+            <button id="tx-call-yes" class="tx-btn" aria-pressed="false" onclick="setTxCall(true)">Yes</button>
+            <button id="tx-call-no" class="tx-btn active" aria-pressed="true" onclick="setTxCall(false)">No</button>
           </div>
         </div>
         <div id="tx-call-room-row" style="display:none;margin-top:8px;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:.83rem;color:#374151">Current room:</span>
           <input id="tx-call-room" type="number" min="1" max="99" placeholder="OR #"
+                 aria-label="Transplant call resident's current OR number"
                  style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.83rem"
-                 oninput="document.getElementById('tx-no-room').style.cssText='font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151';scheduleSave()">
-          <button id="tx-no-room" onclick="setTxNoRoom()"
-                  style="font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151">
+                 oninput="document.getElementById('tx-no-room').classList.remove('active');scheduleSave()">
+          <button id="tx-no-room" class="tx-noroom" onclick="setTxNoRoom()">
             Not in a room
           </button>
         </div>
       </div>
-      <textarea id="situation-text" class="paste-area" rows="4"
+      <textarea id="situation-text" class="paste-area" rows="4" aria-label="Situation update in plain English"
         placeholder="Describe any last-minute changes in plain English. Works before and after plan generation. Examples:&#10;  • OR 52 is also running late now — complex cardiac case&#10;  • OR 63 just finished — remove it from tonight&#10;  • New case just booked in OR 44 — new start, fluoro&#10;  • Dr. Moonlighter is joining us tonight until 10pm&#10;  • Move Jones to OR 63 instead of OR 44&#10;  • Swap the attendings in OR 15 and OR 44"></textarea>
       <button class="parse-btn" id="situation-btn" onclick="processUpdate()">Apply Update</button>
+      <button class="parse-btn" id="undo-btn" onclick="undoLastUpdate()" disabled
+              style="background:#6b7280;margin-left:6px"
+              title="Revert the most recent applied update">↶ Undo last update</button>
       <p class="hint">AI-powered: requires GEMINI_API_KEY. If unavailable, edit OR cards and staff table directly.</p>
       <div id="situation-result"></div>
     </div>
@@ -314,11 +352,12 @@
     <button class="run-btn" onclick="runPlan()">Generate Coverage Plan →</button>
     <button onclick="resetAll()" style="padding:10px 18px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;color:#6b7280;font-size:.9rem;cursor:pointer"
             title="Clear all inputs and start over">↺ Reset / Start Fresh</button>
+    <span id="plan-status" role="status" aria-live="polite"></span>
   </div>
 
   <!-- ── Spinner ───────────────────────────────────────────── -->
-  <div id="spinner" class="spinner-overlay d-none">
-    <div class="spinner-box"><div class="spin"></div>Generating plan…</div>
+  <div id="spinner" class="spinner-overlay d-none" role="status" aria-live="assertive">
+    <div class="spinner-box"><div class="spin" aria-hidden="true"></div>Generating plan…</div>
   </div>
 
   <!-- ── Results ───────────────────────────────────────────── -->
@@ -420,6 +459,7 @@ function checkStepLocks() {
   const badge = document.getElementById("late-ors-lock-badge");
   const unlock = scheduleReady && staffReady;
   step.classList.toggle("step-locked", !unlock);
+  step.setAttribute("aria-disabled", String(!unlock));
   if (badge) badge.style.display = unlock ? "none" : "";
 }
 
@@ -1251,8 +1291,16 @@ function collectStaff() {
 async function runPlan() {
   const rooms = collectORs();
   const staff = collectStaff();
-  if (!rooms.length) { alert("Enter at least one late OR number in step 3."); return; }
-  if (!staff.length) { alert("Add at least one staff member in step 2."); return; }
+  const statusEl = document.getElementById("plan-status");
+  statusEl.innerHTML = "";
+  if (!rooms.length) {
+    statusEl.innerHTML = `<span class="status-pill status-err">⚠ Enter at least one late OR number in step 3.</span>`;
+    return;
+  }
+  if (!staff.length) {
+    statusEl.innerHTML = `<span class="status-pill status-err">⚠ Add at least one staff member in step 2.</span>`;
+    return;
+  }
 
   document.getElementById("spinner").classList.remove("d-none");
   document.getElementById("results-section").classList.add("d-none");
@@ -1263,13 +1311,13 @@ async function runPlan() {
     saveSession();
   } catch (err) {
     if (err.status) {
-      alert("Server error " + err.status + ": " + err.message);
+      statusEl.innerHTML = `<span class="status-pill status-err">Server error ${err.status}: ${esc(err.message)}</span>`;
       return;
     }
     const hint = location.protocol === "file:"
-      ? "\n\nIt looks like the page was opened as a local file. Run 'reliefplan serve' and open http://localhost:8000 instead."
+      ? " — the page was opened as a local file; run the server and open http://localhost:8000 instead."
       : "";
-    alert("Network error: " + err.message + hint);
+    statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}${esc(hint)}</span>`;
   } finally {
     document.getElementById("spinner").classList.add("d-none");
   }
@@ -1384,17 +1432,19 @@ function renderResults(data) {
 
   const section = document.getElementById("results-section");
   section.innerHTML = `
-    <div style="text-align:right;margin-bottom:8px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+    <div class="no-print" style="text-align:right;margin-bottom:8px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
       <button class="parse-btn" onclick="runPlan()" id="recalc-btn"
               style="background:#6366f1">↺ Recalculate</button>
       <button class="parse-btn" onclick="copySummary()" id="copy-summary-btn"
               style="background:#059669">📋 Copy Summary</button>
+      <button class="parse-btn" onclick="window.print()"
+              style="background:#374151">🖨 Print Plan</button>
       <button class="parse-btn" onclick="downloadQIReport()"
               style="background:#b45309">⬇ Download QI Report</button>
     </div>
     ${renderBanner(totalAssigned, totalRooms, errors.length, warnings.length)}
     ${renderBoard(data)}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div class="results-grid" style="margin-bottom:16px">
       ${renderSupervisorGroups(data)}
       ${renderRelief(data)}
     </div>
@@ -1421,6 +1471,7 @@ async function refinePlan(opts = {}) {
   btn.textContent = "Processing…";
   statusEl.innerHTML = `<span class="status-pill status-warn">✨ Refining with AI…</span>`;
   resultEl.innerHTML = "";
+  const undoSnapshot = snapshotState();
 
   try {
     const data = await postJSON("/api/refine", {
@@ -1453,6 +1504,7 @@ async function refinePlan(opts = {}) {
     }
 
     // Re-render the plan with the updated assignments
+    pushUndo(undoSnapshot);
     renderResults(data);
     saveSession();
 
@@ -1680,10 +1732,10 @@ function buildDebugReport(userRequest, data, rooms, staff) {
     },
     staff_snapshot: staff,
     rooms_snapshot: rooms,
-    instructions_for_claude_code:
-      "Generated by MGH Anesthesia 5PM Coverage Planner — Refine Plan step. " +
+    notes:
+      "Generated by MGH Anesthesia 5PM Coverage Planner — plan refinement step. " +
       "Review unhandled_requests[].suggested_feature and changes_rejected[] to " +
-      "identify missing features or bugs, then implement and commit.",
+      "identify missing features or bugs.",
   };
 }
 
@@ -1772,8 +1824,8 @@ function buildQIReport() {
     // ── Situation update result (if processed) ───────────────────────
     situation_result_text: situationResult,
 
-    // ── Instructions for Claude Code ─────────────────────────────────
-    instructions_for_claude_code: [
+    // ── Reader notes ─────────────────────────────────────────────────
+    notes: [
       "This is a QI (Quality Improvement) session report from the MGH Anesthesia 5PM Coverage Planner.",
       "It contains everything the coordinator entered and everything the tool produced.",
       "Use it to:",
@@ -1782,8 +1834,7 @@ function buildQIReport() {
       "  3. Check unassigned_rooms[] — any room there means no attending was found.",
       "  4. Cross-reference pm_staff daytimeOR fields against or_cards to verify continuity.",
       "  5. The schedule_rooms map keys are OR IDs (strings); locationType flags EP/IR/Endo rooms.",
-      "  6. If the plan looks wrong, describe the expected vs actual assignment so the developer can trace the scoring.",
-      "Repository: df125/reliefplan, branch: claude/anesthesia-coverage-models-czDG4",
+      "  6. If the plan looks wrong, note the expected vs actual assignment so the developer can trace the scoring.",
     ].join("\n"),
   };
 }
@@ -1801,27 +1852,23 @@ function setTxCall(available) {
   const noBtn   = document.getElementById("tx-call-no");
   const roomRow = document.getElementById("tx-call-room-row");
   if (!yesBtn) return;
-  if (available) {
-    yesBtn.style.cssText = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #16a34a;cursor:pointer;background:#16a34a;color:#fff;font-weight:600";
-    noBtn.style.cssText  = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151";
-    roomRow.style.display = "flex";
-  } else {
-    yesBtn.style.cssText = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151";
-    noBtn.style.cssText  = "font-size:.8rem;padding:3px 12px;border-radius:4px;border:1px solid #d1d5db;cursor:pointer;background:#e5e7eb;color:#374151;font-weight:600";
-    roomRow.style.display = "none";
+  yesBtn.classList.toggle("active", available);
+  noBtn.classList.toggle("active", !available);
+  yesBtn.setAttribute("aria-pressed", String(available));
+  noBtn.setAttribute("aria-pressed", String(!available));
+  roomRow.style.display = available ? "flex" : "none";
+  if (!available) {
     const inp = document.getElementById("tx-call-room");
     if (inp) inp.value = "";
-    const noRoomBtn = document.getElementById("tx-no-room");
-    if (noRoomBtn) noRoomBtn.style.cssText = "font-size:.8rem;padding:3px 10px;border:1px solid #d1d5db;border-radius:4px;background:#f3f4f6;cursor:pointer;color:#374151";
+    document.getElementById("tx-no-room")?.classList.remove("active");
   }
   scheduleSave();
 }
 
 function setTxNoRoom() {
   const inp = document.getElementById("tx-call-room");
-  const btn = document.getElementById("tx-no-room");
   if (inp) inp.value = "";
-  if (btn) btn.style.cssText = "font-size:.8rem;padding:3px 10px;border:1px solid #6b7280;border-radius:4px;background:#6b7280;cursor:pointer;color:#fff;font-weight:600";
+  document.getElementById("tx-no-room")?.classList.add("active");
   scheduleSave();
 }
 
@@ -1839,6 +1886,7 @@ async function processSituation() {
   btn.textContent = "Processing…";
   statusEl.innerHTML = `<span class="status-pill status-warn">✨ Parsing with AI…</span>`;
   resultEl.innerHTML = "";
+  const undoSnapshot = snapshotState();
 
   try {
     const data = await postJSON("/api/situation",
@@ -1951,6 +1999,7 @@ async function processSituation() {
     // Fill in daytimeOR for any stay-late attendings just added (safety net if LLM omitted it)
     autopopulateDaytimeORs();
     scheduleSave();
+    if (applied.length) pushUndo(undoSnapshot);
 
     // Render summary
     statusEl.innerHTML = `<span class="status-pill status-ok">✓ Done</span>`;
@@ -2114,6 +2163,68 @@ function deleteStaffRow(btn) {
   scheduleSave();
 }
 
+// Apply saved OR-card field values on top of freshly rendered cards
+function applyORFieldValues(ors) {
+  for (const r of (ors || [])) {
+    const card = document.getElementById(`or-card-${r.id}`);
+    if (!card) continue;
+    const sv = (f, v) => { const el = card.querySelector(`[data-field="${f}"]`); if (el && v != null) el.value = v; };
+    const sc = (f, v) => { const el = card.querySelector(`[data-field="${f}"]`); if (el) el.checked = !!v; };
+    sv("attending",    r.daytimeAttending);
+    sv("crna",         r.daytimeCRNA);
+    sv("resident",     r.daytimeResident);
+    sv("estimatedEnd", r.estimatedEnd);
+    sc("complex",      r.flaggedComplex);
+    sc("fluoro",       r.flaggedFluoro);
+    sc("newstart",     r.isNewStart);
+  }
+}
+
+/* =====================================================================
+   Undo — snapshot before each AI-applied update
+===================================================================== */
+const _undoStack = [];  // most recent last; capped at 10
+
+function snapshotState() {
+  return {
+    lateORs:       document.getElementById("late-ors-input")?.value || "",
+    scheduleRooms: JSON.parse(JSON.stringify(scheduleRooms)),
+    staff:         collectStaff().filter(s => s.name !== "Tx Call Resident"),
+    ors:           collectORs(),
+    plan:          currentPlanData ? JSON.parse(JSON.stringify(currentPlanData)) : null,
+  };
+}
+
+function pushUndo(snapshot) {
+  _undoStack.push(snapshot);
+  if (_undoStack.length > 10) _undoStack.shift();
+  updateUndoButton();
+}
+
+function updateUndoButton() {
+  const btn = document.getElementById("undo-btn");
+  if (btn) btn.disabled = !_undoStack.length;
+}
+
+function undoLastUpdate() {
+  const s = _undoStack.pop();
+  if (!s) return;
+  scheduleRooms = s.scheduleRooms;
+  document.getElementById("late-ors-input").value = s.lateORs;
+  renderStaffTable(s.staff);
+  updateLatePreview();
+  applyORFieldValues(s.ors);
+  if (s.plan) {
+    currentPlanData = s.plan;
+    renderResults(s.plan);
+  }
+  const resultEl = document.getElementById("situation-result");
+  if (resultEl) resultEl.innerHTML =
+    `<div class="refine-summary">↶ Last update undone — inputs and plan restored.</div>`;
+  updateUndoButton();
+  saveSession();
+}
+
 function saveSession() {
   const key = getTodayKeyET();
   try {
@@ -2130,6 +2241,8 @@ function saveSession() {
       orConf:        Object.fromEntries(Object.entries(orConfidence)),
       txCallAvail:   document.getElementById("tx-call-room-row")?.style.display !== "none",
       txCallRoom:    document.getElementById("tx-call-room")?.value    || "",
+      txNoRoom:      document.getElementById("tx-no-room")?.classList.contains("active") || false,
+      situationText: document.getElementById("situation-text")?.value  || "",
       staff:         collectStaff(),
       ors:           collectORs(),
       plan:          currentPlanData || null,
@@ -2162,7 +2275,12 @@ function restoreSession() {
     if (s.lateORsInput) document.getElementById("late-ors-input").value = s.lateORsInput;
     if (s.irCount)      document.getElementById("ir-count").value       = s.irCount;
     if (s.endoCount)    document.getElementById("endo-count").value     = s.endoCount;
-    if (s.txCallAvail)  { setTxCall(true); if (s.txCallRoom) document.getElementById("tx-call-room").value = s.txCallRoom; }
+    if (s.txCallAvail)  {
+      setTxCall(true);
+      if (s.txCallRoom) document.getElementById("tx-call-room").value = s.txCallRoom;
+      if (s.txNoRoom)   setTxNoRoom();
+    }
+    if (s.situationText) document.getElementById("situation-text").value = s.situationText;
 
     if (s.orConf) {
       for (const [k, v] of Object.entries(s.orConf)) orConfidence[+k || k] = v;
@@ -2188,21 +2306,7 @@ function restoreSession() {
     updateOffsiteCards();
 
     // Restore any edited OR card field values on top of the freshly rendered cards
-    if (s.ors) {
-      for (const r of s.ors) {
-        const card = document.getElementById(`or-card-${r.id}`);
-        if (!card) continue;
-        const sv = (f, v) => { const el = card.querySelector(`[data-field="${f}"]`); if (el && v != null) el.value = v; };
-        const sc = (f, v) => { const el = card.querySelector(`[data-field="${f}"]`); if (el) el.checked = !!v; };
-        sv("attending",    r.daytimeAttending);
-        sv("crna",         r.daytimeCRNA);
-        sv("resident",     r.daytimeResident);
-        sv("estimatedEnd", r.estimatedEnd);
-        sc("complex",      r.flaggedComplex);
-        sc("fluoro",       r.flaggedFluoro);
-        sc("newstart",     r.isNewStart);
-      }
-    }
+    applyORFieldValues(s.ors);
 
     if (s.plan) {
       currentPlanData = s.plan;
