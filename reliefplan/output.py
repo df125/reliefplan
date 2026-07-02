@@ -1,15 +1,12 @@
 """Rich-based terminal output for the coverage plan."""
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Dict, List
-
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich import box
 from rich.text import Text
 
-from .models import Assignment, CoveragePlan, CoverageWarning, OperatingRoom, StaffMember
+from .models import CoveragePlan, CoverageWarning, OperatingRoom, StaffMember
 
 console = Console(width=120)
 
@@ -24,8 +21,8 @@ def _attending_role_color(role: str) -> str:
 
 def render_plan(
     plan: CoveragePlan,
-    rooms: List[OperatingRoom],
-    staff: List[StaffMember],
+    rooms: list[OperatingRoom],
+    staff: list[StaffMember],
 ) -> None:
     """Print the full coverage plan to the terminal."""
     console.print()
@@ -41,7 +38,7 @@ def render_plan(
     _render_warnings(plan)
 
 
-def _render_assignment_board(plan: CoveragePlan, rooms: List[OperatingRoom]) -> None:
+def _render_assignment_board(plan: CoveragePlan, rooms: list[OperatingRoom]) -> None:
     room_map = {r.id: r for r in rooms}
 
     tbl = Table(
@@ -128,8 +125,8 @@ def _render_assignment_board(plan: CoveragePlan, rooms: List[OperatingRoom]) -> 
 
 def _render_supervisor_groups(
     plan: CoveragePlan,
-    rooms: List[OperatingRoom],
-    staff: List[StaffMember],
+    rooms: list[OperatingRoom],
+    staff: list[StaffMember],
 ) -> None:
     room_map = {r.id: r for r in rooms}
     staff_map = {s.name: s for s in staff}
@@ -172,7 +169,7 @@ def _render_supervisor_groups(
     console.print(tbl)
 
 
-def _render_relief_summary(plan: CoveragePlan, rooms: List[OperatingRoom]) -> None:
+def _render_relief_summary(plan: CoveragePlan, rooms: list[OperatingRoom]) -> None:
     if not plan.relief_entries:
         console.print("[dim]No relief needed (all daytime providers are on the after-5pm list).[/dim]")
         return
@@ -201,7 +198,7 @@ def _render_warnings(plan: CoveragePlan) -> None:
     warnings = [w for w in plan.warnings if w.severity == "warning"]
     infos = [w for w in plan.warnings if w.severity == "info"]
 
-    def _print_group(items: List[CoverageWarning], label: str, color: str) -> None:
+    def _print_group(items: list[CoverageWarning], label: str, color: str) -> None:
         if not items:
             return
         console.print(f"[{color} bold]{label}[/{color} bold]")

@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 
 from .models import (
     Assignment,
@@ -25,7 +24,6 @@ from .models import (
 )
 from .zones import floors_compatible
 
-
 # ---------------------------------------------------------------------------
 # Attending supervision state tracker
 # ---------------------------------------------------------------------------
@@ -34,11 +32,11 @@ from .zones import floors_compatible
 class _AttState:
     """Mutable supervision state for one attending during algorithm execution."""
     staff: StaffMember
-    supervised_rooms: List[int] = field(default_factory=list)
-    supervised_types: List[str] = field(default_factory=list)   # parallel: "CRNA"|"resident"
-    solo_room: Optional[int] = None
-    building: Optional[str] = None
-    floors: Set[str] = field(default_factory=set)
+    supervised_rooms: list[int] = field(default_factory=list)
+    supervised_types: list[str] = field(default_factory=list)   # parallel: "CRNA"|"resident"
+    solo_room: int | None = None
+    building: str | None = None
+    floors: set[str] = field(default_factory=set)
     new_start_count: int = 0
 
     # --- derived properties ---
@@ -196,9 +194,9 @@ def _solo_score(att: _AttState, room: OperatingRoom) -> int:
 
 
 def _swap_improvement_pass(
-    att_states: Dict[str, _AttState],
-    physical: Dict[int, Tuple[str, str, bool]],
-    rooms_by_id: Dict[int, OperatingRoom],
+    att_states: dict[str, _AttState],
+    physical: dict[int, tuple[str, str, bool]],
+    rooms_by_id: dict[int, OperatingRoom],
 ) -> int:
     """
     Greedy best-improvement swap pass over all supervised-room pairs.
@@ -212,7 +210,8 @@ def _swap_improvement_pass(
         hyp = _AttState(staff=att.staff)
         hyp.supervised_rooms = [r for r in att.supervised_rooms if r != remove_id]
         hyp.supervised_types = [
-            t for r, t in zip(att.supervised_rooms, att.supervised_types) if r != remove_id
+            t for r, t in zip(att.supervised_rooms, att.supervised_types, strict=True)
+            if r != remove_id
         ]
         hyp.supervised_rooms.append(add_room.id)
         hyp.supervised_types.append(add_ptype)
@@ -258,7 +257,7 @@ def _swap_improvement_pass(
     total_swaps = 0
     for _pass in range(20):  # safety cap
         # Build current assignment list
-        assignments: List[Tuple[str, int]] = [
+        assignments: list[tuple[str, int]] = [
             (name, rid)
             for name, st in att_states.items()
             for rid in st.supervised_rooms
@@ -314,12 +313,12 @@ def _swap_improvement_pass(
 
 def _find_crna(
     room: OperatingRoom,
-    pool: List[StaffMember],
-    used: Set[str],
-    staff_set: Set[str],
-    late_or_ids: Optional[Set[int]] = None,
-    crna_assigned_ors: Optional[Set[int]] = None,
-) -> Optional[StaffMember]:
+    pool: list[StaffMember],
+    used: set[str],
+    staff_set: set[str],
+    late_or_ids: set[int] | None = None,
+    crna_assigned_ors: set[int] | None = None,
+) -> StaffMember | None:
     """Return best available CRNA for this room, or None."""
     candidates = [
         s for s in pool
@@ -364,9 +363,9 @@ def _find_crna(
 
 def _find_resident(
     room: OperatingRoom,
-    pool: List[StaffMember],
-    used: Set[str],
-) -> Optional[StaffMember]:
+    pool: list[StaffMember],
+    used: set[str],
+) -> StaffMember | None:
     """Return best available resident for this room, or None."""
     candidates = [
         s for s in pool
@@ -397,14 +396,14 @@ def _find_resident(
 # Region-first provider-type decision
 # ---------------------------------------------------------------------------
 
-def _identify_regions(late_rooms: List[OperatingRoom]) -> Dict[str, List[OperatingRoom]]:
+def _identify_regions(late_rooms: list[OperatingRoom]) -> dict[str, list[OperatingRoom]]:
     """Group late rooms into geographic clusters.
 
     Legacy floors share one building → single region.
     Each Lunder floor is its own natural cluster.
     IR/Endo are isolated offsite; they get their own floor key.
     """
-    regions: Dict[str, List[OperatingRoom]] = {}
+    regions: dict[str, list[OperatingRoom]] = {}
     for room in late_rooms:
         key = "Legacy" if room.building == "Legacy" else room.floor
         regions.setdefault(key, []).append(room)
@@ -412,11 +411,11 @@ def _identify_regions(late_rooms: List[OperatingRoom]) -> Dict[str, List[Operati
 
 
 def _decide_provider_types(
-    late_rooms: List[OperatingRoom],
-    crna_pool: List[StaffMember],
-    resident_pool: List[StaffMember],
-    attending_pool: List[StaffMember],
-) -> Dict[int, str]:
+    late_rooms: list[OperatingRoom],
+    crna_pool: list[StaffMember],
+    resident_pool: list[StaffMember],
+    attending_pool: list[StaffMember],
+) -> dict[int, str]:
     """Return or_id → "CRNA" | "resident" | "solo" for every late room.
 
     Regions are processed largest-first so big CRNA clusters (Legacy, L3) consume
@@ -432,11 +431,11 @@ def _decide_provider_types(
     r2_budget = sum(1 for s in resident_pool if s.resident_level == "R2")
     resident_budget = len(resident_pool)
 
-    locked_att_rooms: Set[int] = {
+    locked_att_rooms: set[int] = {
         s.daytime_or for s in attending_pool if s.already_deployed and s.daytime_or
     }
-    crna_pool_names: Set[str] = {s.name for s in crna_pool}
-    crna_pool_ors: Set[int] = {s.daytime_or for s in crna_pool if s.daytime_or}
+    crna_pool_names: set[str] = {s.name for s in crna_pool}
+    crna_pool_ors: set[int] = {s.daytime_or for s in crna_pool if s.daytime_or}
 
     def has_crna_continuity(room: OperatingRoom) -> bool:
         return bool(
@@ -444,10 +443,10 @@ def _decide_provider_types(
             or room.id in crna_pool_ors
         )
 
-    desired_types: Dict[int, str] = {}
+    desired_types: dict[int, str] = {}
 
     for _, region_rooms in sorted(regions.items(), key=lambda x: -len(x[1])):
-        def _room_sort_key(r: OperatingRoom) -> Tuple:
+        def _room_sort_key(r: OperatingRoom) -> tuple:
             locked_tier = 0 if r.id in locked_att_rooms else 1
             if r.flagged_complex:
                 # complex without CRNA continuity → earlier (resident candidate)
@@ -501,15 +500,15 @@ def _decide_provider_types(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
+def plan(rooms: list[OperatingRoom], staff: list[StaffMember]) -> CoveragePlan:
     """Run the full 7-step assignment algorithm and return a CoveragePlan."""
 
-    warnings: List[CoverageWarning] = []
-    relief_entries: List[ReliefEntry] = []
+    warnings: list[CoverageWarning] = []
+    relief_entries: list[ReliefEntry] = []
 
     # --- pools ----------------------------------------------------------
     late_rooms = [r for r in rooms if r.is_late_running]
-    staff_names: Set[str] = {s.name for s in staff if s.available_past_5pm}
+    staff_names: set[str] = {s.name for s in staff if s.available_past_5pm}
     crna_pool = [s for s in staff if s.role == "CRNA" and s.available_past_5pm]
     resident_pool = [
         s for s in staff
@@ -518,8 +517,8 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     attending_pool = [s for s in staff if s.role == "attending" and s.available_past_5pm]
 
     # Physical provider tracking: or_id -> (provider_name, type, is_continuity)
-    physical: Dict[int, Tuple[str, str, bool]] = {}
-    used_providers: Set[str] = set()
+    physical: dict[int, tuple[str, str, bool]] = {}
+    used_providers: set[str] = set()
 
     # ------------------------------------------------------------------ #
     # Step 1 – Identify relief needs                                       #
@@ -545,10 +544,10 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # ------------------------------------------------------------------ #
     # Step 2 – Place CRNAs                                                 #
     # ------------------------------------------------------------------ #
-    late_or_ids: Set[int] = {r.id for r in late_rooms}
+    late_or_ids: set[int] = {r.id for r in late_rooms}
 
     # Sort so continuity rooms (daytime CRNA available by name OR daytime_or match) are first.
-    crna_or_map: Dict[int, str] = {s.daytime_or: s.name for s in crna_pool if s.daytime_or}
+    crna_or_map: dict[int, str] = {s.daytime_or: s.name for s in crna_pool if s.daytime_or}
     rooms_sorted_crna = sorted(
         late_rooms,
         key=lambda r: (
@@ -558,7 +557,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
         ),
     )
 
-    crna_assigned_ors: Set[int] = set()
+    crna_assigned_ors: set[int] = set()
     for room in rooms_sorted_crna:
         if desired_types.get(room.id) != "CRNA":
             continue
@@ -597,7 +596,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             used_providers.add(resident.name)
 
     # Warn about rooms still lacking a physical provider (will need solo attending)
-    rooms_needing_solo: List[OperatingRoom] = []
+    rooms_needing_solo: list[OperatingRoom] = []
     for room in late_rooms:
         if room.id not in physical:
             rooms_needing_solo.append(room)
@@ -607,10 +606,10 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # ------------------------------------------------------------------ #
 
     # Build attending state objects
-    att_states: Dict[str, _AttState] = {
+    att_states: dict[str, _AttState] = {
         a.name: _AttState(staff=a) for a in attending_pool
     }
-    used_attendings: Set[str] = set()
+    used_attendings: set[str] = set()
 
     # Rooms with a physical provider need supervisors
     rooms_needing_supervisor = [r for r in late_rooms if r.id in physical]
@@ -641,7 +640,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     rooms_needing_supervisor.sort(key=_supervised_sort_key)
 
     # Sort attendings for supervision: 3p-10p first, then 2-A, 7a-7p, 1-A last
-    def _att_supervision_order(a: StaffMember) -> Tuple:
+    def _att_supervision_order(a: StaffMember) -> tuple:
         priority = _SUPERVISION_PRIORITY.get(a.shift_type, 99)
         already = 0 if a.already_deployed else 1
         return (priority, already)
@@ -649,7 +648,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     ordered_attendings = sorted(attending_pool, key=_att_supervision_order)
 
     # Tracks which supervised rooms already have an attending assigned
-    rooms_with_supervisor: Set[int] = set()
+    rooms_with_supervisor: set[int] = set()
 
     # -- First pass: continuity (2-A/3p-10p already deployed in a room) --
     for att in ordered_attendings:
@@ -672,7 +671,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
 
         prov_name, prov_type, prov_cont = physical[room.id]
 
-        best_att: Optional[StaffMember] = None
+        best_att: StaffMember | None = None
         best_score = -9999
 
         for att in ordered_attendings:
@@ -697,13 +696,13 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             ))
 
     # -- Steps 5-6: Assign solo attendings to rooms with no physical provider --
-    def _att_solo_order(a: StaffMember) -> Tuple:
+    def _att_solo_order(a: StaffMember) -> tuple:
         priority = _SOLO_PRIORITY.get(a.shift_type, 99)
         return (priority,)
 
     solo_ordered = sorted(attending_pool, key=_att_solo_order)
 
-    unassigned_rooms: List[int] = []
+    unassigned_rooms: list[int] = []
     for room in rooms_needing_solo:
         best_att = None
         best_score = -9999
@@ -721,7 +720,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             used_attendings.add(best_att.name)
         else:
             # Last resort: allow 1-A/2-A to cover solo rather than leave room uncovered
-            fallback_att: Optional[StaffMember] = None
+            fallback_att: StaffMember | None = None
             fallback_score = -9999
             for att in solo_ordered:
                 att_st = att_states[att.name]
@@ -870,7 +869,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             key=_att_solo_order,
         )
         for room in offsite_rooms:
-            best_att: Optional[StaffMember] = None
+            best_att: StaffMember | None = None
             best_score = -9999
             prov_info = physical.get(room.id)
             prov_type = prov_info[1] if prov_info else None
@@ -912,7 +911,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # ------------------------------------------------------------------ #
     # Step 8 – Swap improvement pass                                       #
     # ------------------------------------------------------------------ #
-    rooms_by_id: Dict[int, OperatingRoom] = {r.id: r for r in late_rooms}
+    rooms_by_id: dict[int, OperatingRoom] = {r.id: r for r in late_rooms}
     n_swaps = _swap_improvement_pass(att_states, physical, rooms_by_id)
     if n_swaps:
         warnings.append(CoverageWarning(
@@ -926,15 +925,15 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # ------------------------------------------------------------------ #
 
     # Map or_id -> attending from att_states
-    or_to_attending: Dict[int, Tuple[str, str]] = {}   # or_id -> (name, role)
+    or_to_attending: dict[int, tuple[str, str]] = {}   # or_id -> (name, role)
     for att_name, att_st in att_states.items():
         for or_id in att_st.supervised_rooms:
             or_to_attending[or_id] = (att_name, "supervisor")
         if att_st.solo_room is not None:
             or_to_attending[att_st.solo_room] = (att_name, "solo")
 
-    assignments: List[Assignment] = []
-    no_physical_rooms: List[int] = []
+    assignments: list[Assignment] = []
+    no_physical_rooms: list[int] = []
 
     for room in late_rooms:
         att_info = or_to_attending.get(room.id)
@@ -972,7 +971,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
         ))
 
     # Build supervisor groups summary
-    supervisor_groups: Dict[str, List[int]] = defaultdict(list)
+    supervisor_groups: dict[str, list[int]] = defaultdict(list)
     for a_name, att_st in att_states.items():
         if att_st.supervised_rooms:
             supervisor_groups[a_name] = list(att_st.supervised_rooms)
@@ -985,7 +984,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     # Stay-late suggestions: only when there are still unassigned rooms
     if unassigned_rooms:
         # Map daytime_attending -> list of late OR ids they supervised today
-        daytime_att_late_ors: Dict[str, List[int]] = defaultdict(list)
+        daytime_att_late_ors: dict[str, list[int]] = defaultdict(list)
         for room in late_rooms:
             if room.daytime_attending:
                 daytime_att_late_ors[room.daytime_attending].append(room.id)
@@ -1048,10 +1047,10 @@ def _ends_late(end: str, threshold_hour: int = 21) -> bool:
 
 
 def _soft_preference_warnings(
-    attending_pool: List[StaffMember],
-    att_states: Dict[str, _AttState],
-    late_rooms: List[OperatingRoom],
-    warnings: List[CoverageWarning],
+    attending_pool: list[StaffMember],
+    att_states: dict[str, _AttState],
+    late_rooms: list[OperatingRoom],
+    warnings: list[CoverageWarning],
 ) -> None:
     """Emit info-level warnings for soft-preference deviations."""
 

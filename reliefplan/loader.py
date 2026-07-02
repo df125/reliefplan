@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Tuple
 
 from .models import OperatingRoom, StaffMember
 
@@ -21,7 +20,7 @@ BUILDING_FLOOR_MAP = {
 }
 
 
-def load(path: Path) -> Tuple[List[OperatingRoom], List[StaffMember]]:
+def load(path: Path) -> tuple[list[OperatingRoom], list[StaffMember]]:
     """Parse and validate a JSON input file. Raises ValueError on bad input."""
     try:
         data = json.loads(path.read_text())

@@ -688,13 +688,13 @@ async def parse_refinement(
             continue
         name = s["name"]
         if name in _att_loads:
-            l = _att_loads[name]
-            max_rooms = 2 if l["has_resident"] else 4
-            remaining = max_rooms - len(l["rooms"])
+            load = _att_loads[name]
+            max_rooms = 2 if load["has_resident"] else 4
+            remaining = max_rooms - len(load["rooms"])
             load_lines.append(
-                f"  {name} [{s.get('shiftType','')}]: {len(l['rooms'])} room(s) "
-                f"(has_resident={l['has_resident']}, max={max_rooms}, can_add={remaining}), "
-                f"floors={sorted(l['floors'])}, ORs={sorted(l['rooms'])}"
+                f"  {name} [{s.get('shiftType','')}]: {len(load['rooms'])} room(s) "
+                f"(has_resident={load['has_resident']}, max={max_rooms}, can_add={remaining}), "
+                f"floors={sorted(load['floors'])}, ORs={sorted(load['rooms'])}"
             )
         else:
             load_lines.append(f"  {name} [{s.get('shiftType','')}]: UNASSIGNED — 0 rooms, can take up to 4 (CRNA) or 2 (if any resident)")
@@ -709,9 +709,12 @@ async def parse_refinement(
     room_lines = ["OR details:"]
     for r in rooms:
         flags = []
-        if r.get("flaggedFluoro"):  flags.append("fluoro")
-        if r.get("flaggedComplex"): flags.append("complex")
-        if r.get("isNewStart"):     flags.append("new-start")
+        if r.get("flaggedFluoro"):
+            flags.append("fluoro")
+        if r.get("flaggedComplex"):
+            flags.append("complex")
+        if r.get("isNewStart"):
+            flags.append("new-start")
         flag_str = f" [{', '.join(flags)}]" if flags else ""
         room_lines.append(f"  OR {r['id']}: {r.get('building','')} / {r.get('floor','')}{flag_str}")
 

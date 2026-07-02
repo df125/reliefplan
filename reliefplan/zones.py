@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Set
 
 FLOOR_ORS: dict[str, list[int]] = {
     "THOR":    [4, 14, 15, 16, 43, 44],
@@ -38,7 +37,7 @@ def get_building(or_id: int) -> str:
     return OR_TO_BUILDING.get(or_id, "Unknown")
 
 
-def floors_compatible(floors: Set[str]) -> bool:
+def floors_compatible(floors: set[str]) -> bool:
     """Return False if the set of Lunder floors violates the L2+L4-without-L3 rule."""
     lunder = floors & LUNDER_FLOORS
     if "L2" in lunder and "L4" in lunder and "L3" not in lunder:

@@ -231,7 +231,7 @@ def plan_cmd(input_file: Path | None, sample: bool) -> None:
     Run 'reliefplan sample' to write a starter input file.
     """
     if sample:
-        import tempfile, os
+        import tempfile
 
         tmp = Path(tempfile.mkstemp(suffix=".json")[1])
         tmp.write_text(json.dumps(SAMPLE_INPUT, indent=2))
@@ -294,7 +294,7 @@ def validate(input_file: Path) -> None:
     avail_crna = sum(1 for s in staff if s.role == "CRNA" and s.available_past_5pm)
     avail_res = sum(1 for s in staff if s.role == "resident" and s.available_past_5pm)
 
-    console.print(f"[green]✓ Input is valid.[/green]")
+    console.print("[green]✓ Input is valid.[/green]")
     console.print(f"  Rooms total: {len(rooms)} ({late} late-running)")
     console.print(f"  Attendings available after 5pm: {avail_att}")
     console.print(f"  CRNAs available after 5pm: {avail_crna}")

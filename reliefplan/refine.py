@@ -137,8 +137,10 @@ def apply_edits(
                     rejected.append(f"Cannot move {att2} to OR {or_id}: {err}")
                     continue
 
-            if a1: a1["attending"] = att2
-            if a2: a2["attending"] = att1
+            if a1:
+                a1["attending"] = att2
+            if a2:
+                a2["attending"] = att1
 
             # Handle one side being unassigned
             if att1 and not a2:

@@ -11,8 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .affinities import load_affinities, merge_affinities, save_affinities
 from .algorithm import plan as run_plan
-from .loader import _parse_room, _parse_staff, VALID_SHIFT_TYPES
-from .parser import parse_or_schedule, parse_situation, parse_staff_list, parse_refinement
+from .loader import VALID_SHIFT_TYPES, _parse_room, _parse_staff
+from .parser import parse_or_schedule, parse_refinement, parse_situation, parse_staff_list
 from .refine import apply_edits
 from .roster import load_roster, merge_roster, save_roster
 
@@ -31,7 +31,7 @@ async def api_plan(request: Request) -> dict[str, Any]:
         rooms = [_parse_room(r, i) for i, r in enumerate(body.get("rooms", []))]
         staff = [_parse_staff(s, i) for i, s in enumerate(body.get("staff", []))]
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if not rooms:
         raise HTTPException(status_code=422, detail="No rooms provided")
@@ -79,14 +79,14 @@ async def api_refine(request: Request) -> dict[str, Any]:
         rooms = [_parse_room(r, i) for i, r in enumerate(rooms_raw)]
         staff = [_parse_staff(s, i) for i, s in enumerate(staff_raw)]
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
         refine_result = await parse_refinement(feedback, current_plan, rooms_raw, staff_raw)
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Refinement error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Refinement error: {exc}") from exc
 
     # Promote stay-late daytime providers into the PM staff list
     added_staff_names: list[str] = []
@@ -153,9 +153,9 @@ async def api_situation(request: Request) -> dict[str, Any]:
     try:
         result = await parse_situation(text, rooms_raw, staff_raw)
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Situation parse error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Situation parse error: {exc}") from exc
     return result
 
 
@@ -168,9 +168,9 @@ async def api_parse_schedule(request: Request) -> dict[str, Any]:
     try:
         return await parse_or_schedule(text)
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Parse error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Parse error: {exc}") from exc
 
 
 @app.post("/api/parse/staff")
@@ -182,9 +182,9 @@ async def api_parse_staff(request: Request) -> dict[str, Any]:
     try:
         return await parse_staff_list(text)
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Parse error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Parse error: {exc}") from exc
 
 
 @app.get("/api/sample")
