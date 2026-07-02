@@ -329,7 +329,9 @@
 
 <script>
 /* =====================================================================
-   Zone maps
+   Zone maps — the server (zones.py) is the single source of truth.
+   The literal below is only a bootstrap/offline fallback; on load we
+   replace it with /api/zones so the two can never drift silently.
 ===================================================================== */
 const OR_TO_FLOOR = {};
 for (const id of [4,14,15,16,43,44])                         OR_TO_FLOOR[id] = "THOR";
@@ -341,6 +343,12 @@ OR_TO_FLOOR[17] = "L4";
 for (let i = 81; i <= 91; i++)                               OR_TO_FLOOR[i]  = "L4";
 for (let i = 201; i <= 209; i++)                             OR_TO_FLOOR[i]  = "IR";
 for (let i = 211; i <= 219; i++)                             OR_TO_FLOOR[i]  = "Endo";
+
+fetch("/api/zones").then(r => r.ok ? r.json() : null).then(z => {
+  if (!z?.or_to_floor) return;
+  for (const k of Object.keys(OR_TO_FLOOR)) delete OR_TO_FLOOR[k];
+  Object.assign(OR_TO_FLOOR, z.or_to_floor);
+}).catch(() => {});  // offline / file:// — keep the fallback map
 
 const FLOOR_TO_BUILDING = {
   THOR:"Legacy", Gray:"Legacy", Jackson:"Legacy",
@@ -362,6 +370,36 @@ function esc(v) {
   return String(v)
     .replace(/&/g,"&amp;").replace(/</g,"&lt;")
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// POST JSON, return the parsed response body. A non-2xx response throws an
+// Error carrying .status and the server-supplied detail as its message;
+// network failures throw with no .status — callers branch on that.
+async function postJSON(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail || detail; } catch {}
+    const err = new Error(detail);
+    err.status = resp.status;
+    throw err;
+  }
+  return resp.json();
+}
+
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], {type: "application/json"});
+  Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(blob), download: filename
+  }).click();
+}
+
+function timestampSlug() {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 }
 
 /* =====================================================================
@@ -1220,21 +1258,14 @@ async function runPlan() {
   document.getElementById("results-section").classList.add("d-none");
 
   try {
-    const resp = await fetch("/api/plan", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({rooms, staff}),
-    });
-    if (!resp.ok) {
-      let detail = resp.statusText;
-      try { detail = (await resp.json()).detail || detail; } catch {}
-      alert("Server error " + resp.status + ": " + detail);
-      return;
-    }
-    const data = await resp.json();
+    const data = await postJSON("/api/plan", {rooms, staff});
     renderResults(data);
     saveSession();
   } catch (err) {
+    if (err.status) {
+      alert("Server error " + err.status + ": " + err.message);
+      return;
+    }
     const hint = location.protocol === "file:"
       ? "\n\nIt looks like the page was opened as a local file. Run 'reliefplan serve' and open http://localhost:8000 instead."
       : "";
@@ -1278,13 +1309,7 @@ async function loadSample() {
 }
 
 function exportJSON() {
-  const blob = new Blob(
-    [JSON.stringify({rooms: collectORs(), staff: collectStaff()}, null, 2)],
-    {type: "application/json"}
-  );
-  Object.assign(document.createElement("a"), {
-    href: URL.createObjectURL(blob), download: "coverage-plan.json"
-  }).click();
+  downloadJSON({rooms: collectORs(), staff: collectStaff()}, "coverage-plan.json");
 }
 
 function importJSON(input) {
@@ -1398,25 +1423,12 @@ async function refinePlan(opts = {}) {
   resultEl.innerHTML = "";
 
   try {
-    const resp = await fetch("/api/refine", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        feedback,
-        plan:  currentPlanData,
-        rooms: collectORs(),
-        staff: collectStaff(),
-      }),
+    const data = await postJSON("/api/refine", {
+      feedback,
+      plan:  currentPlanData,
+      rooms: collectORs(),
+      staff: collectStaff(),
     });
-
-    if (!resp.ok) {
-      let detail = resp.statusText;
-      try { detail = (await resp.json()).detail || detail; } catch {}
-      statusEl.innerHTML = `<span class="status-pill status-err">Error: ${esc(detail)}</span>`;
-      return;
-    }
-
-    const data = await resp.json();
 
     // Apply OR list changes before re-rendering (remove_or edits already in plan)
     const localApplied = [];
@@ -1499,7 +1511,8 @@ async function refinePlan(opts = {}) {
     }
 
   } catch (err) {
-    statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}</span>`;
+    const label = err.status ? "Error" : "Network error";
+    statusEl.innerHTML = `<span class="status-pill status-err">${label}: ${esc(err.message)}</span>`;
   } finally {
     btn.disabled = false;
     btn.textContent = "Apply Update";
@@ -1677,11 +1690,7 @@ function buildDebugReport(userRequest, data, rooms, staff) {
 function downloadDebugReport(reportKey) {
   const report = window.__debugReports?.[reportKey];
   if (!report) return;
-  const blob = new Blob([JSON.stringify(report, null, 2)], {type: "application/json"});
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  Object.assign(document.createElement("a"),
-    {href: URL.createObjectURL(blob), download: `refine-debug-${ts}.json`}
-  ).click();
+  downloadJSON(report, `refine-debug-${timestampSlug()}.json`);
 }
 
 /* =====================================================================
@@ -1781,12 +1790,7 @@ function buildQIReport() {
 
 function downloadQIReport() {
   if (!currentPlanData) { alert("Generate a plan first, then download the QI report."); return; }
-  const report = buildQIReport();
-  const blob = new Blob([JSON.stringify(report, null, 2)], {type: "application/json"});
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  Object.assign(document.createElement("a"),
-    {href: URL.createObjectURL(blob), download: `coverage-qi-${ts}.json`}
-  ).click();
+  downloadJSON(buildQIReport(), `coverage-qi-${timestampSlug()}.json`);
 }
 
 /* =====================================================================
@@ -1837,22 +1841,8 @@ async function processSituation() {
   resultEl.innerHTML = "";
 
   try {
-    const resp = await fetch("/api/situation", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({text, rooms: collectORs(), staff: collectStaff()}),
-    });
-
-    if (!resp.ok) {
-      let detail = resp.statusText;
-      try { detail = (await resp.json()).detail || detail; } catch {}
-      statusEl.innerHTML = `<span class="status-pill status-err">Error: ${esc(detail)}</span>`;
-      resultEl.innerHTML = `<div class="refine-summary" style="background:#fef2f2;border-color:#dc2626">
-        AI unavailable — please edit OR cards and staff table manually.</div>`;
-      return;
-    }
-
-    const data = await resp.json();
+    const data = await postJSON("/api/situation",
+      {text, rooms: collectORs(), staff: collectStaff()});
     const applied = [], rejected = [];
 
     // Apply room flag updates
@@ -1974,7 +1964,12 @@ async function processSituation() {
     resultEl.innerHTML = html;
 
   } catch (err) {
-    statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}</span>`;
+    const label = err.status ? "Error" : "Network error";
+    statusEl.innerHTML = `<span class="status-pill status-err">${label}: ${esc(err.message)}</span>`;
+    if (err.status) {
+      resultEl.innerHTML = `<div class="refine-summary" style="background:#fef2f2;border-color:#dc2626">
+        AI unavailable — please edit OR cards and staff table manually.</div>`;
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = "Apply Update";

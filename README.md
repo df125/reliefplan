@@ -25,6 +25,9 @@ pip install -e ".[dev,web]"
 | Variable | Required | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | For AI parsing only | Enables the LLM-powered paste parsing, situation updates, and plan refinement (Google Gemini). Without it, the deterministic local parsers still work and OR cards / staff rows can be edited manually; the AI endpoints return 503. |
+| `GEMINI_MODEL` | No | Override the Gemini model (default `gemini-2.5-flash`). |
+| `GEMINI_TIMEOUT` | No | Per-call LLM timeout in seconds (default 60; one retry on failure). |
+| `RELIEFPLAN_DATA_DIR` | No | Directory for `roster.json` / `affinities.json` (default: repo root). Set for read-only or containerized installs. |
 
 The key is read server-side only and never sent to the browser.
 

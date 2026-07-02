@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .models import OperatingRoom, StaffMember
+from .zones import OR_TO_BUILDING, OR_TO_FLOOR
 
 VALID_BUILDINGS = {"Legacy", "Lunder", "IR", "Endo"}
 VALID_FLOORS = {"THOR", "Gray", "Jackson", "L2", "L3", "L4", "IR", "Endo"}
@@ -41,17 +42,23 @@ def _parse_room(d: dict, idx: int) -> OperatingRoom:
         return d[key]
 
     or_id = int(req("id"))
-    building = req("building")
-    floor = req("floor")
 
-    if building not in VALID_BUILDINGS:
-        raise ValueError(f"{label} OR {or_id}: building must be one of {VALID_BUILDINGS}")
-    if floor not in VALID_FLOORS:
-        raise ValueError(f"{label} OR {or_id}: floor must be one of {VALID_FLOORS}")
-    if floor not in BUILDING_FLOOR_MAP[building]:
-        raise ValueError(
-            f"{label} OR {or_id}: floor '{floor}' is not in building '{building}'"
-        )
+    # The server-side OR map (zones.py) is authoritative for geography.
+    # Client-supplied building/floor is only used for OR ids not in the map.
+    if or_id in OR_TO_FLOOR:
+        floor = OR_TO_FLOOR[or_id]
+        building = OR_TO_BUILDING[or_id]
+    else:
+        building = req("building")
+        floor = req("floor")
+        if building not in VALID_BUILDINGS:
+            raise ValueError(f"{label} OR {or_id}: building must be one of {VALID_BUILDINGS}")
+        if floor not in VALID_FLOORS:
+            raise ValueError(f"{label} OR {or_id}: floor must be one of {VALID_FLOORS}")
+        if floor not in BUILDING_FLOOR_MAP[building]:
+            raise ValueError(
+                f"{label} OR {or_id}: floor '{floor}' is not in building '{building}'"
+            )
 
     return OperatingRoom(
         id=or_id,

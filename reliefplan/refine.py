@@ -4,6 +4,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from .algorithm import _AttState, _state_valid
+
 
 def apply_edits(
     plan: dict[str, Any],
@@ -40,7 +42,7 @@ def apply_edits(
 
         # ── set_attending ──────────────────────────────────────────────────
         if op == "set_attending":
-            err = _validate_attending(name, or_id, staff_by_name, rooms_by_id)
+            err = _validate_attending(name, or_id, staff_by_name, rooms_by_id, assignments)
             if err:
                 rejected.append(err)
                 continue
@@ -125,14 +127,17 @@ def apply_edits(
                 rejected.append(f"Neither OR {or_id} nor OR {or_id2} has an attending assigned.")
                 continue
 
-            # Validate each attending against their new room
+            # Validate each attending against their new room (each vacates
+            # their old room, so exclude it from the hypothetical state)
             if att1:
-                err = _validate_attending(att1, or_id2, staff_by_name, rooms_by_id)
+                err = _validate_attending(att1, or_id2, staff_by_name, rooms_by_id,
+                                          assignments, exclude={or_id})
                 if err:
                     rejected.append(f"Cannot move {att1} to OR {or_id2}: {err}")
                     continue
             if att2:
-                err = _validate_attending(att2, or_id, staff_by_name, rooms_by_id)
+                err = _validate_attending(att2, or_id, staff_by_name, rooms_by_id,
+                                          assignments, exclude={or_id2})
                 if err:
                     rejected.append(f"Cannot move {att2} to OR {or_id}: {err}")
                     continue
@@ -142,7 +147,8 @@ def apply_edits(
             if a2:
                 a2["attending"] = att1
 
-            # Handle one side being unassigned
+            # Handle one side being unassigned: create an assignment for the
+            # room gaining an attending, drop the room left with none
             if att1 and not a2:
                 assignments[or_id2] = _new_assignment(or_id2)
                 assignments[or_id2]["attending"] = att1
@@ -151,10 +157,10 @@ def apply_edits(
                 assignments[or_id] = _new_assignment(or_id)
                 assignments[or_id]["attending"] = att2
                 unassigned.discard(or_id)
-            if not att1 and a1:
+            if not att2 and a1:
                 del assignments[or_id]
                 unassigned.add(or_id)
-            if not att2 and a2:
+            if not att1 and a2:
                 del assignments[or_id2]
                 unassigned.add(or_id2)
 
@@ -199,8 +205,15 @@ def _validate_attending(
     or_id: int,
     staff_by_name: dict,
     rooms_by_id: dict,
+    assignments: dict[int, dict] | None = None,
+    exclude: set[int] = frozenset(),
 ) -> str | None:
-    """Return an error string if the attending cannot be assigned to or_id, else None."""
+    """Return an error string if the attending cannot be assigned to or_id, else None.
+
+    With `assignments`, also checks the solver's hard constraints
+    (`algorithm._state_valid`) against the attending's other current rooms.
+    `exclude` lists ORs the attending is vacating as part of the same edit.
+    """
     if not name or name not in staff_by_name:
         return f"'{name}' not found in staff list."
     sm = staff_by_name[name]
@@ -209,4 +222,25 @@ def _validate_attending(
     room = rooms_by_id.get(or_id)
     if room and "no-fluoro" in sm.restrictions and room.flagged_fluoro:
         return f"'{name}' has a no-fluoro restriction; OR {or_id} requires fluoro capability."
+
+    if room is None or assignments is None:
+        return None
+    st = _AttState(staff=sm)
+    skip = set(exclude) | {or_id}
+    for a in assignments.values():
+        if a.get("attending") != name or a["or_id"] in skip:
+            continue
+        other = rooms_by_id.get(a["or_id"])
+        if other is None:
+            continue
+        st.add_supervised(other, a.get("physical_provider_type") or "CRNA",
+                          other.is_new_start)
+    tgt_ptype = (assignments.get(or_id) or {}).get("physical_provider_type") or "CRNA"
+    st.add_supervised(room, tgt_ptype, room.is_new_start)
+    if not _state_valid(st, rooms_by_id):
+        return (
+            f"Moving {name} to OR {or_id} would break a hard rule given their "
+            f"other rooms (single-building coverage, the Lunder L2+L4 rule, "
+            f"supervision ratios, or the one-new-start cap)."
+        )
     return None

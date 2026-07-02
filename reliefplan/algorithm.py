@@ -193,6 +193,32 @@ def _solo_score(att: _AttState, room: OperatingRoom) -> int:
     return score
 
 
+def _state_valid(st: _AttState, rooms_by_id: dict[int, OperatingRoom]) -> bool:
+    """Hard-constraint check over a complete supervision state.
+
+    Single source of truth shared by the swap optimizer and plan refinement
+    (`refine._validate_attending`). `_AttState.can_supervise` enforces the
+    same rules incrementally during initial placement.
+
+    Checks: one building only (which also isolates offsite IR/Endo rooms
+    from main ORs, since each offsite location is its own building), the
+    Lunder L2+L4-without-L3 rule, supervision ratios (2 rooms max with any
+    resident, 4 max CRNA-only), and the one-new-start cap.
+    """
+    buildings = {rooms_by_id[r].building for r in st.supervised_rooms if r in rooms_by_id}
+    if len(buildings) > 1:
+        return False
+    if not floors_compatible(st.floors):
+        return False
+    if st.resident_count > 0 and st.total_supervised > 2:
+        return False
+    if st.resident_count == 0 and st.total_supervised > 4:
+        return False
+    if st.new_start_count > 1:
+        return False
+    return True
+
+
 def _swap_improvement_pass(
     att_states: dict[str, _AttState],
     physical: dict[int, tuple[str, str, bool]],
@@ -229,25 +255,8 @@ def _swap_improvement_pass(
         r1_pt, r2_pt = physical[r1_id][1], physical[r2_id][1]
         h1 = _hyp(a1, r1_id, r2, r2_pt)
         h2 = _hyp(a2, r2_id, r1, r1_pt)
-        for h in (h1, h2):
-            bldgs = {rooms_by_id[r].building for r in h.supervised_rooms}
-            if len(bldgs) > 1:
-                return False
-            if not floors_compatible(h.floors & {"L2", "L3", "L4"}):
-                return False
-            res = h.supervised_types.count("resident")
-            tot = len(h.supervised_rooms)
-            if res > 0 and tot > 2:
-                return False
-            if res == 0 and tot > 4:
-                return False
-            if h.new_start_count > 1:
-                return False
-            # IR/Endo isolation
-            has_off = any(rooms_by_id[r].building in ("IR", "Endo") for r in h.supervised_rooms)
-            has_main = any(rooms_by_id[r].building not in ("IR", "Endo") for r in h.supervised_rooms)
-            if has_off and has_main:
-                return False
+        if not (_state_valid(h1, rooms_by_id) and _state_valid(h2, rooms_by_id)):
+            return False
         if r2.flagged_fluoro and "no-fluoro" in a1.staff.restrictions:
             return False
         if r1.flagged_fluoro and "no-fluoro" in a2.staff.restrictions:

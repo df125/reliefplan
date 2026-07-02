@@ -95,8 +95,21 @@ class TestPlan:
         assert resp.status_code == 422
         assert "missing required field 'role'" in resp.json()["detail"]
 
-    def test_invalid_room_shape_422(self, client, sample_body):
-        bad_rooms = [{"id": 44, "building": "Legacy", "floor": "L4"}]
+    def test_known_or_geography_corrected(self, client, sample_body):
+        # OR 44 is in the server-side zone map (THOR/Legacy); bogus
+        # client-supplied geography is overridden, not rejected
+        bad_rooms = [{"id": 44, "building": "Lunder", "floor": "L4"}]
+        resp = client.post("/api/plan",
+                           json={"rooms": bad_rooms, "staff": sample_body["staff"]})
+        assert resp.status_code == 200
+        room = resp.json()["room_map"]["44"]
+        assert room["building"] == "Legacy"
+        assert room["floor"] == "THOR"
+
+    def test_unknown_or_invalid_geography_422(self, client, sample_body):
+        # OR 999 is not in the zone map, so client geography is required
+        # and validated — L4 is not a Legacy floor
+        bad_rooms = [{"id": 999, "building": "Legacy", "floor": "L4"}]
         resp = client.post("/api/plan",
                            json={"rooms": bad_rooms, "staff": sample_body["staff"]})
         assert resp.status_code == 422

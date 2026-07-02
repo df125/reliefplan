@@ -103,12 +103,25 @@ class TestSetAttending:
         assert applied == ["OR 44: attending changed from Dr. Torres → Dr. Johnson"]
 
     def test_role_stays_supervisor_when_physical_present(self, base_plan, rooms, staff):
-        edits = [{"operation": "set_attending", "or_id": 15, "name": "Dr. Williams"}]
+        # Free Williams from his Lunder room first — hard-rule validation
+        # forbids covering Lunder OR 63 and Legacy OR 15 simultaneously
+        edits = [
+            {"operation": "remove_attending", "or_id": 63},
+            {"operation": "set_attending", "or_id": 15, "name": "Dr. Williams"},
+        ]
         plan, _, rejected = apply_edits(base_plan, edits, rooms, staff)
         assert rejected == []
         a = _by_or(plan)[15]
         assert a["attending"] == "Dr. Williams"
         assert a["attending_role"] == "supervisor"
+
+    def test_cross_building_assignment_rejected(self, base_plan, rooms, staff):
+        # Williams covers Lunder OR 63; adding Legacy OR 15 must be rejected
+        edits = [{"operation": "set_attending", "or_id": 15, "name": "Dr. Williams"}]
+        plan, applied, rejected = apply_edits(base_plan, edits, rooms, staff)
+        assert applied == []
+        assert len(rejected) == 1 and "hard rule" in rejected[0]
+        assert _by_or(plan)[15]["attending"] == "Dr. Johnson"
 
     def test_unknown_staff_name_rejected(self, base_plan, rooms, staff):
         edits = [{"operation": "set_attending", "or_id": 44, "name": "Dr. Nobody"}]
@@ -214,8 +227,9 @@ class TestSwapAttendings:
         # Williams moved to previously-unassigned OR 71
         assert assignments[71]["attending"] == "Dr. Williams"
         assert 71 not in plan["unassigned_rooms"]
-        # OR 63 was vacated: its slot keeps a placeholder with no attending
-        assert assignments[63]["attending"] is None
+        # OR 63 was vacated: dropped from assignments and marked unassigned
+        assert 63 not in assignments
+        assert 63 in plan["unassigned_rooms"]
         assert len(applied) == 1 and "swapped" in applied[0]
 
     def test_swap_missing_second_or_rejected(self, base_plan, rooms, staff):

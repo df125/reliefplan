@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +13,17 @@ from fastapi.staticfiles import StaticFiles
 from .affinities import load_affinities, merge_affinities, save_affinities
 from .algorithm import plan as run_plan
 from .loader import VALID_SHIFT_TYPES, _parse_room, _parse_staff
-from .parser import parse_or_schedule, parse_refinement, parse_situation, parse_staff_list
+from .parser import (
+    LLMUnavailableError,
+    parse_or_schedule,
+    parse_refinement,
+    parse_situation,
+    parse_staff_list,
+)
 from .refine import apply_edits
 from .roster import load_roster, merge_roster, save_roster
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="MGH Anesthesia Coverage Planner", docs_url=None, redoc_url=None)
 
@@ -54,7 +63,7 @@ async def api_plan(request: Request) -> dict[str, Any]:
         updated_roster  = merge_roster(existing_roster, body.get("staff", []))
         save_roster(updated_roster)
     except Exception:
-        pass
+        logger.warning("Roster persistence failed", exc_info=True)
 
     return {
         **dataclasses.asdict(result),
@@ -85,8 +94,11 @@ async def api_refine(request: Request) -> dict[str, Any]:
         refine_result = await parse_refinement(feedback, current_plan, rooms_raw, staff_raw)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=502, detail="AI service unavailable — try again or edit the plan manually.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Refinement error: {exc}") from exc
+        logger.exception("Refinement failed")
+        raise HTTPException(status_code=500, detail="Refinement failed — see server logs.") from exc
 
     # Promote stay-late daytime providers into the PM staff list
     added_staff_names: list[str] = []
@@ -154,8 +166,11 @@ async def api_situation(request: Request) -> dict[str, Any]:
         result = await parse_situation(text, rooms_raw, staff_raw)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=502, detail="AI service unavailable — try again or edit the inputs manually.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Situation parse error: {exc}") from exc
+        logger.exception("Situation parse failed")
+        raise HTTPException(status_code=500, detail="Situation parse failed — see server logs.") from exc
     return result
 
 
@@ -169,8 +184,11 @@ async def api_parse_schedule(request: Request) -> dict[str, Any]:
         return await parse_or_schedule(text)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=502, detail="AI service unavailable — try again or enter the data manually.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Parse error: {exc}") from exc
+        logger.exception("Parse failed")
+        raise HTTPException(status_code=500, detail="Parse failed — see server logs.") from exc
 
 
 @app.post("/api/parse/staff")
@@ -183,8 +201,22 @@ async def api_parse_staff(request: Request) -> dict[str, Any]:
         return await parse_staff_list(text)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=502, detail="AI service unavailable — try again or enter the data manually.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Parse error: {exc}") from exc
+        logger.exception("Parse failed")
+        raise HTTPException(status_code=500, detail="Parse failed — see server logs.") from exc
+
+
+@app.get("/api/zones")
+def api_zones() -> dict[str, Any]:
+    """Authoritative OR → floor/building topology for the frontend."""
+    from .zones import FLOOR_ORS, OR_TO_BUILDING, OR_TO_FLOOR
+    return {
+        "floor_ors":      FLOOR_ORS,
+        "or_to_floor":    {str(k): v for k, v in OR_TO_FLOOR.items()},
+        "or_to_building": {str(k): v for k, v in OR_TO_BUILDING.items()},
+    }
 
 
 @app.get("/api/sample")

@@ -7,6 +7,7 @@ Falls back gracefully if the API key is absent.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -14,7 +15,13 @@ from typing import Any
 from google import genai
 from google.genai import types as gtypes
 
-_MODEL = "gemini-2.5-flash"
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT", "60"))
+_RETRIES = 1  # one retry on transient failures
+
+
+class LLMUnavailableError(RuntimeError):
+    """The LLM could not produce a usable response (timeout, transport, refusal)."""
 
 # ── Tool schemas (OpenAPI format — converted to Gemini at call time) ───────────
 
@@ -556,24 +563,51 @@ def _extract_fc_args(response: Any, tool_name: str) -> dict[str, Any] | None:
     return None
 
 
+async def _call_tool(
+    contents: str, system: str, tool_name: str, tool_def: dict[str, Any]
+) -> dict[str, Any]:
+    """Run one forced function-call generation with timeout and bounded retry.
+
+    Raises ValueError if the API key is missing, LLMUnavailableError when the
+    model cannot be reached or never returns the expected function call.
+    """
+    client = _client()
+    config = _forced_config(system, tool_name, tool_def)
+    last_exc: Exception | None = None
+    for attempt in range(_RETRIES + 1):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=_MODEL, contents=contents, config=config
+                ),
+                timeout=_TIMEOUT_S,
+            )
+        except Exception as exc:  # timeout or transport error — retry once
+            last_exc = exc
+            if attempt < _RETRIES:
+                await asyncio.sleep(1.5)
+            continue
+        args = _extract_fc_args(response, tool_name)
+        if args is not None:
+            return args
+        last_exc = LLMUnavailableError("LLM did not return the expected function call")
+    raise LLMUnavailableError(
+        f"LLM call '{tool_name}' failed after {_RETRIES + 1} attempt(s)"
+    ) from last_exc
+
+
 # ── Public async functions ─────────────────────────────────────────────────────
 
 async def parse_or_schedule(text: str) -> dict[str, Any]:
     """
     Parse a pasted OR schedule with Gemini.
     Returns {"rooms": {str(id): {attending, crna, resident}}, "count": int, "warnings": []}.
-    Raises ValueError if no API key; RuntimeError on unexpected response.
+    Raises ValueError if no API key; LLMUnavailableError on LLM failure.
     """
-    client = _client()
-    response = await client.aio.models.generate_content(
-        model=_MODEL,
-        contents=f"Extract the OR room assignments from this schedule:\n\n{text}",
-        config=_forced_config(_SYSTEM_SCHEDULE, "extract_schedule", _SCHEDULE_TOOL),
+    args = await _call_tool(
+        f"Extract the OR room assignments from this schedule:\n\n{text}",
+        _SYSTEM_SCHEDULE, "extract_schedule", _SCHEDULE_TOOL,
     )
-
-    args = _extract_fc_args(response, "extract_schedule")
-    if args is None:
-        raise RuntimeError("LLM did not return the expected function call")
 
     rooms: dict[str, Any] = {}
     offsite_count = 0
@@ -609,16 +643,10 @@ async def parse_staff_list(text: str) -> dict[str, Any]:
     Returns {"staff": [...], "warnings": []}.
     Raises ValueError if no API key; RuntimeError on unexpected response.
     """
-    client = _client()
-    response = await client.aio.models.generate_content(
-        model=_MODEL,
-        contents=f"Extract the after-5pm staff from this list:\n\n{text}",
-        config=_forced_config(_SYSTEM_STAFF, "extract_staff", _STAFF_TOOL),
+    args = await _call_tool(
+        f"Extract the after-5pm staff from this list:\n\n{text}",
+        _SYSTEM_STAFF, "extract_staff", _STAFF_TOOL,
     )
-
-    args = _extract_fc_args(response, "extract_staff")
-    if args is None:
-        raise RuntimeError("LLM did not return the expected function call")
 
     staff = []
     for s in args.get("staff", []):
@@ -787,16 +815,10 @@ async def parse_refinement(
         "\n".join(daytime_lines),
     ])
 
-    client = _client()
-    response = await client.aio.models.generate_content(
-        model=_MODEL,
-        contents=f"Please make the following changes to the plan:\n\n{feedback}",
-        config=_forced_config(system, "refine_plan", _REFINE_TOOL),
+    args = await _call_tool(
+        f"Please make the following changes to the plan:\n\n{feedback}",
+        system, "refine_plan", _REFINE_TOOL,
     )
-
-    args = _extract_fc_args(response, "refine_plan")
-    if args is None:
-        raise RuntimeError("LLM did not return the expected function call")
 
     # Normalise edits: or_id_2=0 means absent, name="" means absent
     edits = []
@@ -874,16 +896,10 @@ async def parse_situation(
         f"Current PM staff: {staff_context or 'none listed'}."
     )
 
-    client = _client()
-    response = await client.aio.models.generate_content(
-        model=_MODEL,
-        contents=f"{context}\n\nSituation update:\n{text}",
-        config=_forced_config(_SYSTEM_SITUATION, "parse_situation", _SITUATION_TOOL),
+    args = await _call_tool(
+        f"{context}\n\nSituation update:\n{text}",
+        _SYSTEM_SITUATION, "parse_situation", _SITUATION_TOOL,
     )
-
-    args = _extract_fc_args(response, "parse_situation")
-    if args is None:
-        raise RuntimeError("LLM did not return the expected function call")
 
     return {
         "room_flag_updates": args.get("room_flag_updates", []),

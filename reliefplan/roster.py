@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-ROSTER_PATH = Path(__file__).parent.parent / "roster.json"
+from .storage import atomic_write_json, data_dir
+
+ROSTER_PATH = data_dir() / "roster.json"
 
 
 def load_roster() -> dict:
@@ -17,7 +18,7 @@ def load_roster() -> dict:
 
 
 def save_roster(data: dict) -> None:
-    ROSTER_PATH.write_text(json.dumps(data, indent=2, sort_keys=True))
+    atomic_write_json(ROSTER_PATH, data)
 
 
 def merge_roster(existing: dict, staff: list) -> dict:

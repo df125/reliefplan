@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-AFFINITIES_PATH = Path(__file__).parent.parent / "affinities.json"
+from .storage import atomic_write_json, data_dir
+
+AFFINITIES_PATH = data_dir() / "affinities.json"
 
 
 def load_affinities() -> dict[str, list[str]]:
@@ -18,7 +19,7 @@ def load_affinities() -> dict[str, list[str]]:
 
 
 def save_affinities(data: dict[str, list[str]]) -> None:
-    AFFINITIES_PATH.write_text(json.dumps(data, indent=2))
+    atomic_write_json(AFFINITIES_PATH, data)
 
 
 def merge_affinities(
