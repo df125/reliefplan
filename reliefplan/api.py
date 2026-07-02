@@ -94,7 +94,7 @@ async def api_refine(request: Request) -> dict[str, Any]:
         sa_name = (sa.get("name") or "").strip()
         if not sa_name or any(s.name == sa_name for s in staff):
             continue
-        daytime_or = sa.get("daytime_or") or next(
+        daytime_or = sa.get("daytime_or") or sa.get("daytimeOR") or next(
             (r.id for r in rooms if r.daytime_attending == sa_name), None
         )
         is_moon = bool(sa.get("isMoonlighter"))

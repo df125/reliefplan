@@ -10,6 +10,7 @@ Steps mirror the specification exactly:
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -22,7 +23,7 @@ from .models import (
     ReliefEntry,
     StaffMember,
 )
-from .zones import LUNDER_FLOORS, floors_compatible, same_building
+from .zones import floors_compatible
 
 
 # ---------------------------------------------------------------------------
@@ -757,12 +758,6 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
 
     # 7a: Check if any solo room could be converted to supervised
     #     (if there is a free CRNA who could take the room)
-    free_crnas = [
-        s for s in crna_pool
-        if s.name not in used_providers
-        and not s.name  # placeholder — logic below is more specific
-    ]
-    # Rebuild free crna list properly
     free_crnas = [s for s in crna_pool if s.name not in used_providers]
     for room in rooms_needing_solo[:]:
         if room.id in unassigned_rooms:
@@ -985,7 +980,7 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
             supervisor_groups[a_name] = [att_st.solo_room]
 
     # Soft preference warnings
-    _soft_preference_warnings(attending_pool, att_states, late_rooms, physical, warnings)
+    _soft_preference_warnings(attending_pool, att_states, late_rooms, warnings)
 
     # Stay-late suggestions: only when there are still unassigned rooms
     if unassigned_rooms:
@@ -1024,36 +1019,47 @@ def plan(rooms: List[OperatingRoom], staff: List[StaffMember]) -> CoveragePlan:
     )
 
 
+def _ends_late(end: str, threshold_hour: int = 21) -> bool:
+    """True when an estimated-end string means 9pm or later.
+
+    Handles both formats seen in inputs: 24-hour ('21:00', '22:30') and
+    colloquial ('9pm', '10 pm', 'midnight').
+    """
+    s = (end or "").strip().lower()
+    if not s:
+        return False
+    if "midnight" in s:
+        return True
+    m = re.search(r"\b(\d{1,2}):(\d{2})\s*(am|pm)?\b", s)
+    if m:
+        hour, ampm = int(m.group(1)), m.group(3)
+    else:
+        m = re.search(r"\b(\d{1,2})\s*(am|pm)\b", s)
+        if not m:
+            return False
+        hour, ampm = int(m.group(1)), m.group(2)
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    if hour < 5:
+        hour += 24  # 00:30 / 12am / 2am mean past midnight, not early morning
+    return hour >= threshold_hour
+
+
 def _soft_preference_warnings(
     attending_pool: List[StaffMember],
     att_states: Dict[str, _AttState],
     late_rooms: List[OperatingRoom],
-    physical: Dict,
     warnings: List[CoverageWarning],
 ) -> None:
     """Emit info-level warnings for soft-preference deviations."""
 
-    # Soft 1: check if any CRNA slots remain unused while rooms have residents
-    crna_supervised = sum(
-        1 for or_id, (_, ptype, _) in physical.items() if ptype == "CRNA"
-    )
-    resident_supervised = sum(
-        1 for or_id, (_, ptype, _) in physical.items() if ptype == "resident"
-    )
-    if resident_supervised > 0 and crna_supervised > 0:
-        pass  # normal mixed usage, no warning needed
-
-    # Soft 3: 1-A attending management (covered by step 7b; skip to avoid duplicates)
-    pass
-
-    # Soft 5: long cases (past 8pm) should go to 1-A, 2-A, or 3p-10p
+    # Soft 5: long cases (9pm or later) should go to 1-A, 2-A, or 3p-10p
     late_shifts = {"1-A", "2-A", "3p-10p"}
     for room in late_rooms:
         end = room.estimated_end or ""
-        if any(kw in end.lower() for kw in ("midnight", "10pm", "11pm", "9pm")):
-            phys_info = physical.get(room.id)
-            # Find who's covering this room
-            from .zones import get_floor as _gf
+        if _ends_late(end):
             for a_name, att_st in att_states.items():
                 if room.id in att_st.supervised_rooms or att_st.solo_room == room.id:
                     att_obj = next((a for a in attending_pool if a.name == a_name), None)

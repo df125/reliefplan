@@ -44,7 +44,6 @@ def apply_edits(
             if err:
                 rejected.append(err)
                 continue
-            sm = staff_by_name[name]
             old = (assignments[or_id]["attending"] if or_id in assignments else None)
             if or_id not in assignments:
                 assignments[or_id] = _new_assignment(or_id)

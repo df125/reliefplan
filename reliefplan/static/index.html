@@ -1179,7 +1179,11 @@ function collectStaff() {
       departureTarget:  g("departureTarget")?.value?.trim() || "",
       daytimeLocation:  g("daytimeLocation")?.value || "",
     };
-  }).filter(Boolean);
+  }).filter(Boolean)
+    // The Tx Call Resident row is synthetic — the toggle below is its only
+    // source of truth. Drop any table copy (e.g. rendered from a restored
+    // session) so it can't be counted twice.
+    .filter(s => s.name !== "Tx Call Resident");
 
   // Inject Transplant Call Resident if the toggle is set to Yes
   const txRoomRow = document.getElementById("tx-call-room-row");
@@ -1209,8 +1213,8 @@ function collectStaff() {
 async function runPlan() {
   const rooms = collectORs();
   const staff = collectStaff();
-  if (!rooms.length) { alert("Enter at least one late OR number in step 2."); return; }
-  if (!staff.length) { alert("Add at least one staff member in step 3."); return; }
+  if (!rooms.length) { alert("Enter at least one late OR number in step 3."); return; }
+  if (!staff.length) { alert("Add at least one staff member in step 2."); return; }
 
   document.getElementById("spinner").classList.remove("d-none");
   document.getElementById("results-section").classList.add("d-none");
@@ -1559,7 +1563,7 @@ function renderBoard(data) {
     const attCell = a.attending
       ? `${esc(a.attending)} <span class="badge-shift">${esc(shift)}</span>` : "—";
     const physCell = a.physical_provider
-      ? `${esc(a.physical_provider)} <span class="${a.physical_provider_type==="CRNA"?"badge-crna":"badge-res"}">${a.physical_provider_type}</span>`
+      ? `${esc(a.physical_provider)} <span class="${a.physical_provider_type==="CRNA"?"badge-crna":"badge-res"}">${esc(a.physical_provider_type)}</span>`
       : a.attending ? `<em style="color:#6b7280">solo attending</em>` : "";
     return `<tr class="${rowClass}">
       <td style="font-weight:700">${a.or_id}</td>
@@ -1608,7 +1612,7 @@ function renderSupervisorGroups(data) {
     const role  = roles[name]||"?";
     const descs = ids.sort((a,b)=>a-b).map(id => {
       const r = rm[String(id)]||{};
-      return `OR${id}<small style="color:#6b7280">(${r.floor||"?"})</small>`;
+      return `OR${id}<small style="color:#6b7280">(${esc(r.floor||"?")})</small>`;
     }).join(", ");
     return `<tr>
       <td style="font-weight:600">${esc(name)}</td>
@@ -1973,7 +1977,7 @@ async function processSituation() {
     statusEl.innerHTML = `<span class="status-pill status-err">Network error: ${esc(err.message)}</span>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Process Update";
+    btn.textContent = "Apply Update";
   }
 }
 
@@ -2175,10 +2179,13 @@ function restoreSession() {
         `<span class="status-pill status-ok">✓ ${orCount} rooms (restored)</span>`;
     }
 
-    if (s.staff && s.staff.length) {
-      renderStaffTable(s.staff);
+    // The synthetic Tx Call Resident row is recreated from the toggle state,
+    // not the table — filter it so it doesn't appear as an editable row.
+    const tableStaff = (s.staff || []).filter(x => x.name !== "Tx Call Resident");
+    if (tableStaff.length) {
+      renderStaffTable(tableStaff);
       document.getElementById("staff-status").innerHTML =
-        `<span class="status-pill status-ok">✓ ${s.staff.length} staff (restored)</span>`;
+        `<span class="status-pill status-ok">✓ ${tableStaff.length} staff (restored)</span>`;
     }
 
     checkStepLocks();
